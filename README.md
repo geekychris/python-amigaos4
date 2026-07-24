@@ -2,16 +2,29 @@
 
 CPython 3.12.7 port for AmigaOS 4.1 PowerPC (sam460ex / QEMU).
 
-**Status:** Phase 1 bootstrap **linking**. Configure works; all core .o files
+**Status:** Phase 1 complete. Configure works; all core .o files
 compile cleanly; POSIX shim layer covers the newlib gaps; gthread stubs cover
 libgcc's emutls dependency. Cross-linker produces a **7 MB stripped PowerPC ELF
 python.exe binary** ready to deploy to `DH1:python-os4` on the OS4 HDF.
 
-**Runtime prerequisite:** the binary is linked against `newlib.library 53.68`.
-Base OS4.1 FE ships 53.30; Update 3 reaches 53.34. To reach 53.68+ requires
-AmiUpdate on the OS4 side, which needs networking. See the amiga_mcp
-`docs/amigaos4-setup.md` "Networking" section for the QEMU rtl8139 +
-Roadshow + AmiUpdate procedure.
+**Runtime verified** under QEMU sam460ex on OS4 4.1 FE with Update 3's
+`newlib.library.kmod` (53.87) swapped into `SYS:Kickstart`:
+
+```
+1.SYS:> DH1:python-os4 --version
+Python 3.12.7
+```
+
+The binary is linked against `newlib.library 53.68`; the SDK and Update 3
+both ship 53.87 which satisfies it. Base OS4.1 FE ships 53.30 (fails
+the version check). Extract Update 3 with `lha x`, push
+`Content/Kickstart/newlib.library.kmod` to the OS4 side, `copy` it into
+`SYS:Kickstart/newlib.library.kmod CLONE`, reboot.
+
+`print(...)` output doesn't reach stdout yet — that's the Phase 2
+workload (frozen stdlib bootstrap so the io + codec subsystem
+initialises). `--version` works because it's an early-exit path in
+`Modules/main.c` that runs before stdlib init.
 
 ## Layout
 
@@ -59,22 +72,25 @@ docker build -t amiga-python-build:local .   # once (or when Dockerfile changes)
     has the code but doesn't expose the decls in default feature-test mode)
   - `O_NOFOLLOW`, `O_CLOEXEC`, `O_DIRECTORY` — defined as 0
 
-## What blocks Phase 1
+## Phase 2 (next): stdlib bootstrap
 
-Each build iteration reveals 1-2 more POSIX-shim needs. Current known gaps
-(from latest failed build):
+`--version` runs; `print(x)` returns silently. To get any real Python
+behaviour we need CPython's frozen stdlib installed alongside the
+interpreter so `import sys, os, encodings, io, codecs` work at startup.
 
-- `fork` / `execv` / `execve` — deep problem, needs SystemTagList-based
-  replacement (`_posixsubprocess` module disabled for now to advance)
-- `PyOS_BeforeFork` / `PyOS_AfterFork_Child/Parent` — related to fork
-- `INET_ADDRSTRLEN` — bsdsocket.library exposes sockets differently
-  (`_socket` module disabled)
-- Various `RLIMIT_*`, `LOG_*`, `SIGQUIT`, etc. — Amiga doesn't have most
-  POSIX signal/rlimit machinery
+Concrete Phase-2 workload:
 
-Realistic remaining Phase-1 work: **1-2 weeks focused** to shim/skip enough
-that `python3 -c 'print(1)'` actually links + runs. Then Phase 2 (stdlib
-freeze + install) is another 3-5 weeks per the original assessment.
+- Freeze the pure-Python stdlib and install `Lib/python3.12/` into an
+  Amiga-side directory (probably `DH1:python-os4-lib/`)
+- Point `sys.path` at that dir via `PYTHONHOME` / `PYTHONPATH` env or
+  a `python.exe`-side config file
+- Re-enable the C modules we currently disable in `setup.local` that
+  don't actually need forks/sockets/threads (`_json`, `_csv`,
+  `unicodedata`, `_hashlib` — some of these might slot in trivially)
+- Verify `import sys; print(sys.version)` produces output
+
+That unblocks Phase 3 (sockets via bsdsocket) → Phase 4 (threading +
+subprocess) → Phase 5 (pip) → Phase 6 (native `_amiga` bindings).
 
 ## Development inner loop
 
