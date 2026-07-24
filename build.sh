@@ -41,7 +41,11 @@ export AR=ppc-amigaos-ar
 export RANLIB=ppc-amigaos-ranlib
 export STRIP=ppc-amigaos-strip
 # newlib-based OS4 crt + inline4 macros for classic-style API names
-export CFLAGS="-mcrt=newlib -mhard-float -O2 -mcpu=440 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff -include /work/amiga_shim.h"
+# Base CFLAGS - no shim include, so configures undeclared-function
+# detection can distinguish "real function" from "our stub". The shim
+# only gets force-included for the make phase below.
+export CFLAGS_BASE="-mcrt=newlib -mhard-float -O2 -mcpu=440 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+export CFLAGS="$CFLAGS_BASE"
 export LDFLAGS="-mcrt=newlib -lauto"
 # Ensure "ld" for shared extensions actually goes through the PPC GCC
 # driver (so -mcrt=newlib etc. survive). LDSHARED from the environment
@@ -93,9 +97,12 @@ if [ "$STAGE" = "make" ]; then
     # Plain -l is subject to standard archive-scan rules (only
     # resolves outstanding undefs at that link position); CPython
     # builds the link line in an order that misses them.
-    ppc-amigaos-gcc $CFLAGS -c /work/amiga_shim.c -o amiga_shim.o
+    ppc-amigaos-gcc $CFLAGS_BASE -c /work/amiga_shim.c -o amiga_shim.o
     ppc-amigaos-ar rcs libamiga_shim.a amiga_shim.o
     export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
+    # For make (not configure), force-include the shim header so
+    # every .c file sees our prototypes / define overrides.
+    export CFLAGS="$CFLAGS_BASE -include /work/amiga_shim.h"
     echo "=== make ==="
     # Aim for the interpreter binary first; skip stdlib compile until we
     # know the core links. Use -k to keep going past first failure so we

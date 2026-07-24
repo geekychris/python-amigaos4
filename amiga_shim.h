@@ -13,13 +13,19 @@
 extern "C" {
 #endif
 
+/* Shims are gated per libc. Newlib on OS4 is minimal — needs
+ * unsetenv, initgroups, setrlimit/getrlimit. Clib2 provides all
+ * of these already, so only stub what the target libc lacks. */
+#include <unistd.h>          /* both clib2 and newlib have this */
+
+#ifndef __CLIB2__
 int unsetenv(const char *name);
+/* Signature matches clib2's (gid_t = unsigned int) so
+ * newlib builds match too when we're the only definer. */
+int initgroups(const char *user, unsigned int group);
+#endif
 
-/* Supplementary groups don't exist on AmigaOS. Stubbed to succeed
- * so callers that "set up" groups don't error out — Python only
- * calls this after fork() paths we don't execute anyway. */
-int initgroups(const char *user, int group);
-
+#ifndef __CLIB2__
 /* Resource limits — POSIX rlim + setrlimit/getrlimit. Newlib on OS4
  * doesn't ship these. Stubbed to fail with ENOSYS so callers gracefully
  * degrade. faulthandler.c only uses this on Unix crash paths. */
@@ -35,6 +41,7 @@ struct rlimit { unsigned long rlim_cur; unsigned long rlim_max; };
 #define RLIMIT_AS      9
 int setrlimit(int resource, const struct rlimit *rlim);
 int getrlimit(int resource, struct rlimit *rlim);
+#endif
 
 /* fileno lives in newlib but its prototype isn't visible without a
  * POSIX feature test macro. Declare it here so CPython sees it. */

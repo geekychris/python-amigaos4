@@ -8,3 +8,8 @@ Python-3.12.7.tar.xz
 # configure patches matter; capture those as configure.amigaos.patch
 # for review, not the whole tree.
 Python-3.12.7/
+
+# Runtime library extracted from the walkero SDK image. Not our
+# code to redistribute — use extract-newlib.sh to fetch a fresh
+# copy from the Docker image. See README for OS4-side install.
+newlib.library

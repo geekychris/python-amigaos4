@@ -20,13 +20,16 @@
  * value as a poor-man's substitute — the env var will still exist
  * but with an empty string, which is what most callers effectively
  * test for. Full removal would need to walk the env array. */
+#ifndef __CLIB2__
+/* Newlib-only stubs — clib2 has all of these built in. */
+
 int unsetenv(const char *name)
 {
     if (!name || !*name) return -1;
     return setenv(name, "", 1);
 }
 
-int initgroups(const char *user, int group)
+int initgroups(const char *user, unsigned int group)
 {
     (void)user; (void)group;
     return 0;   /* no-op success — Amiga has no supplementary groups */
@@ -46,6 +49,7 @@ int getrlimit(int resource, struct rlimit *rlim)
     errno = ENOSYS;
     return -1;
 }
+#endif   /* !__CLIB2__ */
 
 /* --- gthread stubs -------------------------------------------------
  * libgcc's emutls.c (emulated thread-local storage) references the
@@ -115,8 +119,7 @@ int __gthread_recursive_mutex_lock   (gthread_mutex_t *m) { (void)m; return 0; }
 int __gthread_recursive_mutex_trylock(gthread_mutex_t *m) { (void)m; return 0; }
 int __gthread_recursive_mutex_unlock (gthread_mutex_t *m) { (void)m; return 0; }
 
-/* CPython interpreter also references this — set by fileutils.c
- * detection code. With O_CLOEXEC #defined as 0 (our shim), the
- * detection code compiles out but the extern still gets referenced.
- * Define it here as -1 = "unknown/no". */
-int _Py_open_cloexec_works = -1;
+/* NOTE: _Py_open_cloexec_works is defined by CPython's fileutils.c
+ * itself. It was previously stubbed here for the clib2 attempt where
+ * fileutils.c compiled the definition out. With newlib the real
+ * definition exists — do NOT redefine here (linker collision). */
