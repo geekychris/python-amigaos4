@@ -2,9 +2,11 @@
 
 CPython 3.12.7 port for AmigaOS 4.1 PowerPC (sam460ex / QEMU).
 
-**Status:** Phase 1 bootstrap in progress. Configure works; ~73 core `.o` files
-compile cleanly; disabled-modules list working; POSIX shim layer stubbed. Not yet
-producing a linked interpreter binary — see "What blocks Phase 1" below.
+**Status:** Phase 1 bootstrap **linking**. Configure works; all core .o files
+compile cleanly; POSIX shim layer covers the newlib gaps; gthread stubs cover
+libgcc's emutls dependency. Cross-linker produces a **7 MB stripped PowerPC ELF
+python.exe binary** ready to deploy to `DH1:python-os4` on the OS4 HDF. Runtime
+behaviour under QEMU sam460ex not yet verified — that's the immediate next step.
 
 ## Layout
 

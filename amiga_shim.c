@@ -46,3 +46,77 @@ int getrlimit(int resource, struct rlimit *rlim)
     errno = ENOSYS;
     return -1;
 }
+
+/* --- gthread stubs -------------------------------------------------
+ * libgcc's emutls.c (emulated thread-local storage) references the
+ * `__gthread_*` interface. On systems without native TLS + no pthread
+ * library the linker complains. For our single-threaded Phase-1
+ * interpreter we stub the whole interface with a single-slot-per-key
+ * global — enough for the interpreter to link.
+ *
+ * When we get to Phase 4 (threading) these need to become real
+ * pthread-key-backed implementations. Until then, do NOT enable
+ * multi-threading — there's one shared slot per key. */
+
+typedef struct { void *value; } gthread_key_slot_t;
+
+int __gthread_key_create(gthread_key_slot_t **key, void (*dtor)(void *))
+{
+    (void)dtor;
+    static gthread_key_slot_t slots[128];
+    static int next_slot = 0;
+    if (next_slot >= 128) return -1;
+    slots[next_slot].value = NULL;
+    *key = &slots[next_slot++];
+    return 0;
+}
+
+int __gthread_key_delete(gthread_key_slot_t *key)
+{
+    if (key) key->value = NULL;
+    return 0;
+}
+
+void *__gthread_getspecific(gthread_key_slot_t *key)
+{
+    return key ? key->value : NULL;
+}
+
+int __gthread_setspecific(gthread_key_slot_t *key, const void *value)
+{
+    if (!key) return -1;
+    key->value = (void *)value;
+    return 0;
+}
+
+int __gthread_once(int *once, void (*func)(void))
+{
+    if (!once) return -1;
+    if (*once) return 0;
+    *once = 1;
+    func();
+    return 0;
+}
+
+/* Returning 0 = "single-threaded" makes libgcc take fast paths
+ * that skip locking. Perfect for Phase 1. */
+int __gthread_active_p(void) { return 0; }
+
+/* Mutex family. Single-threaded → all no-ops that always succeed. */
+typedef int gthread_mutex_t;
+int __gthread_mutex_init   (gthread_mutex_t *m) { if (m) *m = 0; return 0; }
+int __gthread_mutex_destroy(gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_mutex_lock   (gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_mutex_trylock(gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_mutex_unlock (gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_recursive_mutex_init   (gthread_mutex_t *m) { if (m) *m = 0; return 0; }
+int __gthread_recursive_mutex_destroy(gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_recursive_mutex_lock   (gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_recursive_mutex_trylock(gthread_mutex_t *m) { (void)m; return 0; }
+int __gthread_recursive_mutex_unlock (gthread_mutex_t *m) { (void)m; return 0; }
+
+/* CPython interpreter also references this — set by fileutils.c
+ * detection code. With O_CLOEXEC #defined as 0 (our shim), the
+ * detection code compiles out but the extern still gets referenced.
+ * Define it here as -1 = "unknown/no". */
+int _Py_open_cloexec_works = -1;

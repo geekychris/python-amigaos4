@@ -88,11 +88,14 @@ if [ "$STAGE" = "make" ]; then
     # every time. Setup.local is only consulted from the build dir,
     # not from srcdir, so we overwrite it after configure runs.
     cp -f /work/setup.local Modules/Setup.local
-    # Compile our POSIX shims and stuff them into a static lib so
-    # the LINK step picks them up automatically.
+    # Compile our POSIX shims. Use --whole-archive around the .a
+    # so every symbol gets pulled into the link unconditionally.
+    # Plain -l is subject to standard archive-scan rules (only
+    # resolves outstanding undefs at that link position); CPython
+    # builds the link line in an order that misses them.
     ppc-amigaos-gcc $CFLAGS -c /work/amiga_shim.c -o amiga_shim.o
     ppc-amigaos-ar rcs libamiga_shim.a amiga_shim.o
-    export LDFLAGS="$LDFLAGS -L. -lamiga_shim"
+    export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
     echo "=== make ==="
     # Aim for the interpreter binary first; skip stdlib compile until we
     # know the core links. Use -k to keep going past first failure so we
