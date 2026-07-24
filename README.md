@@ -21,10 +21,26 @@ the version check). Extract Update 3 with `lha x`, push
 `Content/Kickstart/newlib.library.kmod` to the OS4 side, `copy` it into
 `SYS:Kickstart/newlib.library.kmod CLONE`, reboot.
 
-`print(...)` output doesn't reach stdout yet — that's the Phase 2
-workload (frozen stdlib bootstrap so the io + codec subsystem
-initialises). `--version` works because it's an early-exit path in
-`Modules/main.c` that runs before stdlib init.
+`print(...)` output doesn't reach stdout yet — early exit paths
+(`-V`, `-h`, `--version`) print via `fprintf(stdout,...)` before
+`Py_Initialize()` runs, and those work perfectly. Anything past
+Python init (running `-c` code, importing modules, syntax errors)
+returns silently even with `-v`, `-X dev`, `PYTHONVERBOSE=1`. That's
+Phase 2's core bug: stdout is being disconnected somewhere between
+`Py_Initialize()` calling `_Py_InitializeMain()` and the runtime
+actually writing to fd 1.
+
+Not tractable to fix by tweaking shims blind. Needs a debug interp
+build + qemu GDB attach so we can single-step through the initconfig
++ pylifecycle paths and see where the FD gets dropped. Likely
+suspects: `_Py_open_cloexec_works` sentinel, `Py_INITIALIZE_TERMINATED`
+early-exit paths, or newlib's `fdopen()` shim (declared but its
+runtime behaviour on OS4 not verified).
+
+Stdlib packaging works — `python312.zip` (1.9 MB, 372 modules)
+sits at `DH1:python312.zip`, `PYTHONHOME=DH1:` and
+`PYTHONPATH=DH1:python312.zip` are set. Verified via `getenv`.
+The zip itself is fine (verified round-trip with host Python).
 
 ## Layout
 
@@ -72,25 +88,33 @@ docker build -t amiga-python-build:local .   # once (or when Dockerfile changes)
     has the code but doesn't expose the decls in default feature-test mode)
   - `O_NOFOLLOW`, `O_CLOEXEC`, `O_DIRECTORY` — defined as 0
 
-## Phase 2 (next): stdlib bootstrap
+## Phase 2 status: silent init failure
 
-`--version` runs; `print(x)` returns silently. To get any real Python
-behaviour we need CPython's frozen stdlib installed alongside the
-interpreter so `import sys, os, encodings, io, codecs` work at startup.
+Stdlib is packaged + installed:
+- `python312.zip` (1.9 MB, 372 pure-Python modules from `Lib/`) at
+  `DH1:python312.zip`
+- `PYTHONHOME=DH1:`, `PYTHONPATH=DH1:python312.zip` set in ENV:
+- OS4 side sees them fine: `getenv PYTHONPATH` returns the path
 
-Concrete Phase-2 workload:
+But `DH1:python-os4 -c "1"` returns exit 0 with **zero output**,
+even with `-v`, `-X dev`, `PYTHONVERBOSE=1`. Same for `-c "1/0"`
+(should traceback) and `-c "syntax error!"` (should SyntaxError).
+`-V` and `-h` work perfectly because they're early-exit paths.
 
-- Freeze the pure-Python stdlib and install `Lib/python3.12/` into an
-  Amiga-side directory (probably `DH1:python-os4-lib/`)
-- Point `sys.path` at that dir via `PYTHONHOME` / `PYTHONPATH` env or
-  a `python.exe`-side config file
-- Re-enable the C modules we currently disable in `setup.local` that
-  don't actually need forks/sockets/threads (`_json`, `_csv`,
-  `unicodedata`, `_hashlib` — some of these might slot in trivially)
-- Verify `import sys; print(sys.version)` produces output
+Something in `Py_Initialize()` disconnects stdout/stderr before the
+Python-visible I/O system takes over. Next step is a debug build
+plus a GDB attach via QEMU's stub (`start-qemu-os4.sh --gdb`) to
+walk through `_Py_InitializeMain()` and find where fd 1 gets
+dropped. Suspects on the list:
+- newlib `fdopen()` shim — I declared the prototype but never
+  verified the underlying newlib implementation on OS4
+- `_Py_open_cloexec_works` interaction with our `O_CLOEXEC=0`
+- Some clib2/newlib divergence in how sys.stdout gets its underlying FILE*
 
-That unblocks Phase 3 (sockets via bsdsocket) → Phase 4 (threading +
-subprocess) → Phase 5 (pip) → Phase 6 (native `_amiga` bindings).
+Not "1 more shim to add" — needs interactive symbolic debugging.
+When that's cracked, `print()` will start working and the rest of
+Phase 2 (module discovery through the zip) will fall out because
+the stdlib packaging is already correct.
 
 ## Development inner loop
 

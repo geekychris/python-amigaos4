@@ -13,3 +13,4 @@ Python-3.12.7/
 # code to redistribute — use extract-newlib.sh to fetch a fresh
 # copy from the Docker image. See README for OS4-side install.
 newlib.library
+python312.zip
