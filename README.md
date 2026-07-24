@@ -5,8 +5,13 @@ CPython 3.12.7 port for AmigaOS 4.1 PowerPC (sam460ex / QEMU).
 **Status:** Phase 1 bootstrap **linking**. Configure works; all core .o files
 compile cleanly; POSIX shim layer covers the newlib gaps; gthread stubs cover
 libgcc's emutls dependency. Cross-linker produces a **7 MB stripped PowerPC ELF
-python.exe binary** ready to deploy to `DH1:python-os4` on the OS4 HDF. Runtime
-behaviour under QEMU sam460ex not yet verified — that's the immediate next step.
+python.exe binary** ready to deploy to `DH1:python-os4` on the OS4 HDF.
+
+**Runtime prerequisite:** the binary is linked against `newlib.library 53.68`.
+Base OS4.1 FE ships 53.30; Update 3 reaches 53.34. To reach 53.68+ requires
+AmiUpdate on the OS4 side, which needs networking. See the amiga_mcp
+`docs/amigaos4-setup.md` "Networking" section for the QEMU rtl8139 +
+Roadshow + AmiUpdate procedure.
 
 ## Layout
 
