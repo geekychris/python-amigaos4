@@ -14,8 +14,6 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
-#include <exec/ports.h>
-#include <exec/io.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/intuition.h>
@@ -27,7 +25,6 @@
 #include <graphics/rastport.h>
 #include <graphics/view.h>
 #include <utility/tagitem.h>
-#include <devices/timer.h>
 
 
 /* -lauto is supposed to auto-open these library-interface pairs, but
@@ -38,13 +35,6 @@ struct Library         *IntuitionBase = NULL;
 struct IntuitionIFace  *IIntuition    = NULL;
 struct Library         *GfxBase       = NULL;
 struct GraphicsIFace   *IGraphics     = NULL;
-
-/* Lazily-opened timer.device used by py_wait_message for real Wait()
- * on (win_sig | timer_sig) — no busy-poll.  Shared across the process,
- * torn down in the module's atexit hook. */
-static struct MsgPort   *g_timer_port = NULL;
-static struct TimeRequest *g_timer_ior  = NULL;
-static int g_timer_open = 0;
 
 
 /* --------------------------------------------------------------------- */
@@ -445,56 +435,9 @@ py_get_message(PyObject *self, PyObject *args)
 }
 
 
-/* Lazily open timer.device (UNIT_MICROHZ) + a reply MsgPort +
- * TimeRequest.  Returns 1 on success, 0 on failure (in which case
- * callers fall back to busy-poll). */
-static int
-ensure_timer(void)
-{
-    if (g_timer_open) return 1;
-    g_timer_port = CreateMsgPort();
-    if (!g_timer_port) return 0;
-    g_timer_ior = (struct TimeRequest *)AllocSysObjectTags(ASOT_IOREQUEST,
-                    ASOIOR_Size,      sizeof(struct TimeRequest),
-                    ASOIOR_ReplyPort, g_timer_port,
-                    TAG_END);
-    if (!g_timer_ior) {
-        DeleteMsgPort(g_timer_port);
-        g_timer_port = NULL;
-        return 0;
-    }
-    if (OpenDevice("timer.device", UNIT_MICROHZ,
-                   (struct IORequest *)g_timer_ior, 0) != 0) {
-        FreeSysObject(ASOT_IOREQUEST, g_timer_ior);
-        g_timer_ior = NULL;
-        DeleteMsgPort(g_timer_port);
-        g_timer_port = NULL;
-        return 0;
-    }
-    g_timer_open = 1;
-    return 1;
-}
-
-
-static void
-teardown_timer(void)
-{
-    if (!g_timer_open) return;
-    CloseDevice((struct IORequest *)g_timer_ior);
-    FreeSysObject(ASOT_IOREQUEST, g_timer_ior);
-    DeleteMsgPort(g_timer_port);
-    g_timer_ior = NULL;
-    g_timer_port = NULL;
-    g_timer_open = 0;
-}
-
-
 /* Block until an IDCMP message arrives OR timeout expires (in seconds).
- *   timeout < 0     — block indefinitely on the window signal
- *   timeout == 0    — return immediately (poll only)
- *   timeout > 0     — Wait() on win_sig | timer_sig; abort timer if it
- *                     didn't fire; then peek/drain the port.
- * Zero CPU usage while waiting — no Delay()-loop. */
+ * timeout < 0 means forever.  Returns first message dict, or None on
+ * timeout / broken window. */
 static PyObject *
 py_wait_message(PyObject *self, PyObject *args)
 {
@@ -508,39 +451,25 @@ py_wait_message(PyObject *self, PyObject *args)
     ULONG win_sig = 1UL << port->mp_SigBit;
 
     if (timeout < 0) {
+        /* Block forever on the window signal.  Release GIL so other
+         * Python threads can run while we wait. */
         Py_BEGIN_ALLOW_THREADS
         Wait(win_sig);
         Py_END_ALLOW_THREADS
-    } else if (timeout > 0) {
-        if (!ensure_timer()) {
-            /* Emergency fallback if timer.device won't open. */
-            int ticks = (int)(timeout * 50.0);
-            if (ticks < 1) ticks = 1;
-            Py_BEGIN_ALLOW_THREADS
-            while (ticks-- > 0 && IsMsgPortEmpty(port)) {
-                Delay(1);
-            }
-            Py_END_ALLOW_THREADS
-        } else {
-            ULONG usec = (ULONG)(timeout * 1000000.0);
-            g_timer_ior->Request.io_Command = TR_ADDREQUEST;
-            g_timer_ior->Time.Seconds       = usec / 1000000;
-            g_timer_ior->Time.Microseconds  = usec % 1000000;
-            ULONG timer_sig = 1UL << g_timer_port->mp_SigBit;
-            SendIO((struct IORequest *)g_timer_ior);
-            ULONG mask;
-            Py_BEGIN_ALLOW_THREADS
-            mask = Wait(win_sig | timer_sig);
-            Py_END_ALLOW_THREADS
-            if (!(mask & timer_sig)) {
-                /* Message woke us first — cancel the pending timer. */
-                AbortIO((struct IORequest *)g_timer_ior);
-            }
-            WaitIO((struct IORequest *)g_timer_ior);
+    } else {
+        /* Poll every Delay(1) tick (20ms) until either a message
+         * arrives or the timeout expires.  IsMsgPortEmpty is a
+         * peek — doesn't consume. */
+        int ticks = (int)(timeout * 50.0);
+        if (ticks < 1) ticks = 1;
+        Py_BEGIN_ALLOW_THREADS
+        while (ticks-- > 0 && IsMsgPortEmpty(port)) {
+            Delay(1);
         }
+        Py_END_ALLOW_THREADS
     }
-    /* timeout == 0 → fall through and just drain what's already there */
 
+    /* Return the first pending message, if any. */
     struct IntuiMessage *msg = (struct IntuiMessage *)GetMsg(port);
     if (!msg) Py_RETURN_NONE;
     PyObject *d = _msg_to_dict(msg);
@@ -750,11 +679,28 @@ static struct PyModuleDef amigamodule = {
 };
 
 
+/* File-based init tracer — needed because Python's stdout isn't
+ * usable during PyInit__amiga (init runs BEFORE sys.stdout is set up
+ * for user code, and any fprintf(stderr) may be lost to the bridge
+ * SCRIPT capture path).  Appends one line per stage to T:pyinit.log. */
+static void
+init_trace(const char *stage)
+{
+    FILE *f = fopen("T:pyinit.log", "a");
+    if (f) {
+        fprintf(f, "PyInit__amiga: %s\n", stage);
+        fclose(f);
+    }
+}
+
+
 PyMODINIT_FUNC
 PyInit__amiga(void)
 {
+    init_trace("enter");
     PyObject *m = PyModule_Create(&amigamodule);
-    if (!m) return NULL;
+    if (!m) { init_trace("PyModule_Create returned NULL"); return NULL; }
+    init_trace("module created");
 
     /* Explicitly open intuition.library + graphics.library and cache
      * their interfaces.  Uses the classic-style OpenLibrary/GetInterface
@@ -806,10 +752,6 @@ PyInit__amiga(void)
     PyModule_AddIntConstant(m, "WFLG_ACTIVATE",         WFLG_ACTIVATE);
     PyModule_AddIntConstant(m, "WFLG_SIMPLE_REFRESH",   WFLG_SIMPLE_REFRESH);
     PyModule_AddIntConstant(m, "WFLG_SMART_REFRESH",    WFLG_SMART_REFRESH);
-
-    /* Ensure the shared timer.device port is torn down at interpreter
-     * shutdown so no signal bit is leaked back to the task pool. */
-    Py_AtExit(teardown_timer);
 
     return m;
 }
