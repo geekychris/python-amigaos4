@@ -17,6 +17,7 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
+#include <exec/ports.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/intuition.h>
@@ -29,6 +30,14 @@
 #include <graphics/view.h>
 #include <utility/tagitem.h>
 
+/* rexxsyslib.library — ARexx interpreter + IPC. Its proto header on
+ * OS4 declares RexxSysBase as `struct RxsLib *`, so use the same
+ * type here to avoid a redeclaration mismatch. */
+#include <rexx/errors.h>
+#include <rexx/storage.h>
+#include <rexx/rxslib.h>
+#include <proto/rexxsyslib.h>
+
 
 /* -lauto is supposed to auto-open these library-interface pairs, but
  * with CPython's link-line ordering the -lauto position is such that
@@ -38,6 +47,8 @@ struct Library         *IntuitionBase = NULL;
 struct IntuitionIFace  *IIntuition    = NULL;
 struct Library         *GfxBase       = NULL;
 struct GraphicsIFace   *IGraphics     = NULL;
+struct Library         *RexxSysBase   = NULL;
+struct RexxSysIFace    *IRexxSys      = NULL;
 
 
 /* --------------------------------------------------------------------- */
@@ -550,8 +561,16 @@ mk_string_info(char *buffer, char *undo, int maxlen)
     if (!si) return NULL;
     si->Buffer     = (UBYTE *)buffer;
     si->UndoBuffer = (UBYTE *)undo;
-    si->BufferPos  = 0;
-    si->MaxChars   = maxlen;
+    /* MaxChars in StringInfo is total buffer bytes including the null.
+     * Callers allocate maxlen+1, so pass maxlen+1 here. */
+    si->MaxChars   = maxlen + 1;
+    /* Place cursor at end of any pre-filled text so the user is editing
+     * *after* the existing content, and set NumChars accordingly —
+     * without this Intuition thinks the pre-filled buffer is empty and
+     * key input has no effect. */
+    int len = buffer ? (int)strlen(buffer) : 0;
+    si->BufferPos  = len;
+    si->NumChars   = len;
     si->DispPos    = 0;
     return si;
 }
@@ -729,6 +748,13 @@ py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
                  dlg->win->BorderTop + ly + DIALOG_GADGET_H - 3);
         Text(rp, (STRPTR)dlg->fields[i].label,
                  (LONG)strlen(dlg->fields[i].label));
+    }
+
+    /* Auto-activate the first string gadget so the user can start
+     * typing immediately without an extra click.  This also forces
+     * a refresh which recomputes cursor position from BufferPos. */
+    if (dlg->n_fields > 0 && dlg->fields[0].gadget) {
+        ActivateGadget(dlg->fields[0].gadget, dlg->win, NULL);
     }
 
     return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)dlg);
@@ -945,6 +971,222 @@ py_release_pen(PyObject *self, PyObject *args)
 
 
 /* --------------------------------------------------------------------- */
+/* ARexx — send commands to any public MsgPort speaking the ARexx        */
+/*         protocol; also drive the REXX interpreter itself.             */
+/* --------------------------------------------------------------------- */
+
+/* Send a single RXCOMM message to `port_name` and block until the
+ * reply comes back.  On success returns the RESULT string (empty
+ * string if the host didn't set one).  On failure raises RuntimeError
+ * or ValueError with the ARexx severity/error pair.
+ *
+ * `port_name` is the public MsgPort name (case-sensitive on OS4;
+ * classic ARexx uppercases them).  `command` is the raw ARexx
+ * command string as the target app would parse it (e.g. "PLAY",
+ * "QUIT", "GETATTR STEM ATTR VALUE VAR result", etc). */
+static PyObject *
+py_rexx_send(PyObject *self, PyObject *args)
+{
+    const char *port_name;
+    const char *command;
+    if (!PyArg_ParseTuple(args, "ss", &port_name, &command))
+        return NULL;
+
+    if (!RexxSysBase || !IRexxSys) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "rexxsyslib.library not open — _amiga init failed to open it");
+        return NULL;
+    }
+
+    /* Find the target port.  Public-port list needs Forbid()/Permit(). */
+    struct MsgPort *target = NULL;
+    Forbid();
+    target = FindPort((STRPTR)port_name);
+    Permit();
+    if (!target) {
+        PyErr_Format(PyExc_ValueError, "ARexx port '%s' not found", port_name);
+        return NULL;
+    }
+
+    /* Fresh reply port for this exchange — using our own port keeps
+     * the exchange strictly synchronous (no chance of colliding with
+     * a background reply from an earlier call). */
+    struct MsgPort *reply = CreateMsgPort();
+    if (!reply) {
+        return PyErr_NoMemory();
+    }
+
+    struct RexxMsg *msg = CreateRexxMsg(reply, NULL, (STRPTR)port_name);
+    if (!msg) {
+        DeleteMsgPort(reply);
+        return PyErr_NoMemory();
+    }
+
+    msg->rm_Args[0] = CreateArgstring((STRPTR)command, strlen(command));
+    if (!msg->rm_Args[0]) {
+        DeleteRexxMsg(msg);
+        DeleteMsgPort(reply);
+        return PyErr_NoMemory();
+    }
+    msg->rm_Action = RXCOMM | RXFF_RESULT;
+
+    /* Fire and wait. */
+    PutMsg(target, (struct Message *)msg);
+    WaitPort(reply);
+    struct RexxMsg *rpl = (struct RexxMsg *)GetMsg(reply);
+
+    PyObject *result = NULL;
+    if (rpl->rm_Result1 == RC_OK) {
+        if (rpl->rm_Result2) {
+            result = py_str_safe((const char *)rpl->rm_Result2);
+            DeleteArgstring((STRPTR)rpl->rm_Result2);
+        } else {
+            result = PyUnicode_FromString("");
+        }
+    } else {
+        PyErr_Format(PyExc_RuntimeError,
+                     "ARexx returned severity=%ld error=%ld for port '%s'",
+                     (long)rpl->rm_Result1, (long)rpl->rm_Result2, port_name);
+    }
+
+    DeleteArgstring((STRPTR)rpl->rm_Args[0]);
+    DeleteRexxMsg(rpl);
+    DeleteMsgPort(reply);
+
+    return result;
+}
+
+
+/* Execute an ARexx script string via the REXX interpreter port.
+ * Convenience wrapper: sends `command` to port "REXX" with RXFF_STRING
+ * so the interpreter treats it as an inline script rather than a
+ * disk-loaded .rexx file.  Returns the RESULT the script emitted
+ * (via RESULT after `options results`), or empty string. */
+static PyObject *
+py_rexx_execute(PyObject *self, PyObject *args)
+{
+    const char *script;
+    if (!PyArg_ParseTuple(args, "s", &script))
+        return NULL;
+
+    if (!RexxSysBase || !IRexxSys) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "rexxsyslib.library not open");
+        return NULL;
+    }
+
+    struct MsgPort *rexx_port = NULL;
+    Forbid();
+    rexx_port = FindPort((STRPTR)"REXX");
+    Permit();
+    if (!rexx_port) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "REXX port not found — is the rexxmast server running?");
+        return NULL;
+    }
+
+    struct MsgPort *reply = CreateMsgPort();
+    if (!reply) return PyErr_NoMemory();
+
+    struct RexxMsg *msg = CreateRexxMsg(reply, (STRPTR)"rexx", (STRPTR)"REXX");
+    if (!msg) {
+        DeleteMsgPort(reply);
+        return PyErr_NoMemory();
+    }
+
+    msg->rm_Args[0] = CreateArgstring((STRPTR)script, strlen(script));
+    if (!msg->rm_Args[0]) {
+        DeleteRexxMsg(msg);
+        DeleteMsgPort(reply);
+        return PyErr_NoMemory();
+    }
+    msg->rm_Action = RXCOMM | RXFF_STRING | RXFF_RESULT;
+
+    PutMsg(rexx_port, (struct Message *)msg);
+    WaitPort(reply);
+    struct RexxMsg *rpl = (struct RexxMsg *)GetMsg(reply);
+
+    PyObject *result = NULL;
+    if (rpl->rm_Result1 == RC_OK) {
+        if (rpl->rm_Result2) {
+            result = py_str_safe((const char *)rpl->rm_Result2);
+            DeleteArgstring((STRPTR)rpl->rm_Result2);
+        } else {
+            result = PyUnicode_FromString("");
+        }
+    } else {
+        PyErr_Format(PyExc_RuntimeError,
+                     "REXX script error severity=%ld error=%ld",
+                     (long)rpl->rm_Result1, (long)rpl->rm_Result2);
+    }
+
+    DeleteArgstring((STRPTR)rpl->rm_Args[0]);
+    DeleteRexxMsg(rpl);
+    DeleteMsgPort(reply);
+
+    return result;
+}
+
+
+/* Return the list of public MsgPort names that *look* like ARexx
+ * ports — heuristic: an ARexx-aware Amiga app publishes a port
+ * whose name is all uppercase (classic convention).  Filters
+ * IExec-owned ports (SERIAL, PARALLEL, ...) that aren't ARexx targets.
+ *
+ * Not perfect — a rogue app can publish a lowercase ARexx port and
+ * a system port might be uppercase — but a useful cut of the noise
+ * for a "which apps can I talk to" listing.  Callers who want the
+ * raw list should use list_ports(). */
+static PyObject *
+py_list_rexx_ports(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *out = PyList_New(0);
+    if (!out) return NULL;
+
+    static const char *SYS_PORTS[] = {
+        "input.device", "timer.device", "console.device", "audio.device",
+        "trackdisk.device", "serial.device", "parallel.device",
+        "gameport.device", "keyboard.device", "printer.device",
+        NULL,
+    };
+
+    Forbid();
+    struct ExecBase *sb = (struct ExecBase *)SysBase;
+    for (struct Node *n = sb->PortList.lh_Head; n->ln_Succ; n = n->ln_Succ) {
+        const char *name = (n->ln_Name != NULL) ? (const char *)n->ln_Name : "";
+        if (!*name) continue;
+
+        /* Uppercase-only heuristic. */
+        int ok = 1;
+        for (const char *p = name; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            if (c >= 'a' && c <= 'z') { ok = 0; break; }
+        }
+        if (!ok) continue;
+
+        /* Skip well-known system devices. */
+        for (const char **s = SYS_PORTS; *s; s++) {
+            if (strcmp(name, *s) == 0) { ok = 0; break; }
+        }
+        if (!ok) continue;
+
+        PyObject *py_name = py_str_safe(name);
+        if (!py_name) { Permit(); Py_DECREF(out); return NULL; }
+        if (PyList_Append(out, py_name) < 0) {
+            Permit();
+            Py_DECREF(py_name);
+            Py_DECREF(out);
+            return NULL;
+        }
+        Py_DECREF(py_name);
+    }
+    Permit();
+
+    return out;
+}
+
+
+/* --------------------------------------------------------------------- */
 /* Module definition                                                     */
 /* --------------------------------------------------------------------- */
 
@@ -1014,6 +1256,14 @@ static PyMethodDef amiga_methods[] = {
     {"release_pen",       py_release_pen,       METH_VARARGS,
         "release_pen(handle, pen) — return pen to shared colormap."},
 
+    /* ARexx — send commands to remote ports + drive the REXX interpreter */
+    {"rexx_send",         py_rexx_send,         METH_VARARGS,
+        "rexx_send(port, command) -> result_str — send RXCOMM to an ARexx port."},
+    {"rexx_execute",      py_rexx_execute,      METH_VARARGS,
+        "rexx_execute(script) -> result_str — run inline REXX via the REXX port."},
+    {"list_rexx_ports",   py_list_rexx_ports,   METH_NOARGS,
+        "list_rexx_ports() -> [name] of public ports that look like ARexx targets."},
+
     {NULL, NULL, 0, NULL},
 };
 
@@ -1067,6 +1317,17 @@ PyInit__amiga(void)
         if (GfxBase) {
             IGraphics = (struct GraphicsIFace *)
                 GetInterface(GfxBase, "main", 1, NULL);
+        }
+    }
+    if (!RexxSysBase) {
+        RexxSysBase = OpenLibrary("rexxsyslib.library", 44);
+        if (RexxSysBase) {
+            IRexxSys = (struct RexxSysIFace *)
+                GetInterface(RexxSysBase, "main", 1, NULL);
+            if (!IRexxSys) {
+                CloseLibrary(RexxSysBase);
+                RexxSysBase = NULL;
+            }
         }
     }
 

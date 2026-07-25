@@ -70,6 +70,44 @@ walkero SDK), the `sqlite3` stdlib package pushed to `DH1:lib/sqlite3/`,
 + the Python-side `Store` class using `INSERT`/`SELECT` with
 `sqlite3.Row` row factory and LIKE-based tag search.
 
+## ARexx — Python talks to (and drives) other Amiga apps
+
+`_amiga` now bundles three ARexx entry points:
+
+| entry point                       | what it does                                        |
+| --------------------------------- | --------------------------------------------------- |
+| `_amiga.list_rexx_ports()`        | public MsgPorts that look like ARexx targets         |
+| `_amiga.rexx_send(port, cmd)`     | RXCOMM → target port, block for reply, return result |
+| `_amiga.rexx_execute(script)`     | run inline REXX via the interpreter's `REXX` port    |
+
+Backed by `rexxsyslib.library` V44 opened in `PyInit__amiga`.
+Under the hood: `CreateRexxMsg → CreateArgstring → PutMsg → WaitPort
+→ GetMsg` with error mapping to `RuntimeError` / `ValueError`.
+
+### `rexx_console.py` — clickable REXX playground
+
+`DH1:python-os4 DH1:pytests/examples/rexx_console.py`
+
+![rexx console](screenshots/rexx_console.png)
+
+- Left pane: scrollable list of detected ARexx ports (`WORKBENCH,
+  AMIDOCK, REXX, AREXX, AMIGABRIDGE, DEFICONS, RINGHIOMP, RINGHIO`
+  on a fresh OS4 boot).
+- Right pane: rolling transcript of commands + responses.
+- Bottom bar: **Refresh** rescans ports, **Send Cmd** pops a
+  composite StringGadget dialog to type an ARexx command, **REXX
+  Script** runs an inline script through the interpreter,
+  **Quit** closes.
+- All click-driven (built on `amiga.ui.App / Button / ListPanel`).
+
+Companion text-mode smoke test:
+
+`DH1:python-os4 DH1:pytests/examples/arexx_demo.py`
+
+Prints the detected ports, executes `say 'from python: answer is
+' || (6*7); return 42` through the interpreter (returns `'42'`),
+and probes for a running media app to drive.
+
 ## Full demo lineup
 
 Everything below was captured live from OS4 in this session.
@@ -147,7 +185,9 @@ don't churn pens on repeated calls.
 | exec       | `find_task`, `avail_mem`, `avail_mem_summary`, `list_tasks`, `list_libraries`, `list_ports`                     |
 | dos        | `current_dir_name`, `volume_info`                                                                               |
 | intuition  | `open_window`, `close_window`, `window_geom`, `clear_window`, `draw_text`, `get_message`, `wait_message`, `active_window` |
+| dialog     | `open_dialog`, `run_dialog`, `close_dialog` (composite StringGadget form)                                       |
 | graphics   | `draw_line`, `fill_rect`, `dot`, `obtain_pen`, `release_pen`                                                    |
+| arexx      | `list_rexx_ports`, `rexx_send`, `rexx_execute`                                                                  |
 | constants  | 12 IDCMP\_\*, 7 WFLG\_\*, 6 MEMF\_\*                                                                            |
 
 **`amiga.turtle` (Python, on top of `_amiga`)** — subset of stdlib's turtle
