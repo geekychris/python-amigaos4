@@ -1,0 +1,38 @@
+--- /dev/fd/12	2026-07-24 19:34:35
++++ Python-3.12.7/Objects/unicodeobject.c	2026-07-24 19:31:53
+@@ -15449,8 +15449,35 @@
+         return -1;
+     }
+ 
++    /* AMIGA probe: log every codec lookup + result to RAM:pycodec.log */
++    FILE *_pcl = fopen("RAM:pycodec.log", "a");
++    if (_pcl) { fprintf(_pcl, "codec lookup: '%s'\n", encoding); fflush(_pcl); }
++
+     PyObject *name_obj = NULL;
+     PyObject *codec = _PyCodec_Lookup(encoding);
++
++    /* Log result AND any Python exception left set. */
++    if (_pcl) {
++        fprintf(_pcl, "  codec ptr: %p\n", (void*)codec);
++        if (PyErr_Occurred()) {
++            PyObject *ptype, *pvalue, *ptraceback;
++            PyErr_Fetch(&ptype, &pvalue, &ptraceback);
++            PyErr_NormalizeException(&ptype, &pvalue, &ptraceback);
++            if (pvalue) {
++                PyObject *s = PyObject_Str(pvalue);
++                if (s) {
++                    const char *msg = PyUnicode_AsUTF8(s);
++                    fprintf(_pcl, "  exception: %s\n", msg ? msg : "(unprintable)");
++                    Py_DECREF(s);
++                }
++            }
++            /* Put it back so caller sees it. */
++            PyErr_Restore(ptype, pvalue, ptraceback);
++        }
++        fflush(_pcl);
++        fclose(_pcl);
++    }
++
+     PyMem_RawFree(encoding);
+ 
+     if (!codec)

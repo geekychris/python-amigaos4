@@ -178,9 +178,31 @@ Python path configuration:
 
 The zip exists at `DH1:python312.zip`. Sys.path[0] points at it.
 But init still fails with `failed to get the Python codec of the
-filesystem encoding` — **zipimport isn't reading the zip contents**.
-Next step: either debug zipimport on our port, or ship the stdlib
-as flat .py files at `DH1:lib/` (sys.path[1]) as a workaround.
+filesystem encoding`.
+
+Deeper probe (`Objects-unicodeobject.c.patch` adds logging to
+`config_get_codec_name`) reveals the actual exception:
+
+```
+codec lookup: 'utf-8'
+  codec ptr: 0x0
+  exception: No module named 'encodings'
+```
+
+Extracted flat stdlib to `DH1:lib/{os.py, io.py, abc.py, codecs.py,
+posixpath.py, stat.py, _collections_abc.py, genericpath.py,
+encodings/*.py}` — files verified present via a small C stat
+probe (opendir + stat both succeed from newlib). **Yet Python's
+import machinery still returns "No module named 'encodings'".**
+
+Not a filesystem or POSIX-shim issue. The frozen `_bootstrap_external`
+Python module (loaded during `Py_Initialize`) can't find on-disk
+modules on our Amiga config, even though its underlying stat/open
+calls work. Probably a wide-string / path-normalisation quirk
+between `config->module_search_paths` (dumped OK) and what the
+finder actually stat()s. Next session: patch `_bootstrap_external`
+or `posixmodule.c` to log every stat/import attempt to a file so
+we can see which specific probe fails.
 
 Also huge infrastructure win: bridge daemon on OS4 launched in
 TCP mode (`amiga-bridge TCP 2345`) with QEMU hostfwd — file
