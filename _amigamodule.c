@@ -16,6 +16,22 @@
 #include <exec/tasks.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/intuition.h>
+#include <proto/graphics.h>
+#include <intuition/intuition.h>
+#include <intuition/intuitionbase.h>
+#include <graphics/text.h>
+#include <graphics/rastport.h>
+
+
+/* -lauto is supposed to auto-open these library-interface pairs, but
+ * with CPython's link-line ordering the -lauto position is such that
+ * the auto-opener object files aren't pulled in.  Declare + explicitly
+ * open in PyInit__amiga() below. */
+struct Library         *IntuitionBase = NULL;
+struct IntuitionIFace  *IIntuition    = NULL;
+struct Library         *GfxBase       = NULL;
+struct GraphicsIFace   *IGraphics     = NULL;
 
 
 /* --------------------------------------------------------------------- */
@@ -253,8 +269,218 @@ py_version(PyObject *self, PyObject *Py_UNUSED(ignored))
     /* Advertise which build this is. */
     return Py_BuildValue("(sss)",
                          "python-amigaos4 native _amiga bindings",
-                         "0.1.0",
-                         "phase 6 initial");
+                         "0.2.0",
+                         "phase 6 + real Intuition windows");
+}
+
+
+/* --------------------------------------------------------------------- */
+/* Intuition — real windowed UI                                          */
+/* --------------------------------------------------------------------- */
+
+/* Opaque window handles are the address of struct Window* cast to an
+ * unsigned long, which Python holds as an int.  The Amiga owns the
+ * storage; Python is a bookkeeping layer. */
+
+static PyObject *
+py_open_window(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {
+        "title", "left", "top", "width", "height", "idcmp", "flags", NULL,
+    };
+    const char *title = "Python";
+    int left = 100, top = 100, width = 400, height = 200;
+    unsigned long idcmp = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY;
+    unsigned long flags = WFLG_SIZEGADGET | WFLG_DRAGBAR | WFLG_DEPTHGADGET
+                        | WFLG_CLOSEGADGET | WFLG_ACTIVATE | WFLG_SIMPLE_REFRESH;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|siiiikk", kw,
+            &title, &left, &top, &width, &height, &idcmp, &flags))
+        return NULL;
+
+    struct Window *w = OpenWindowTags(NULL,
+        WA_Title,       (Tag)title,
+        WA_Left,        left,
+        WA_Top,         top,
+        WA_InnerWidth,  width,
+        WA_InnerHeight, height,
+        WA_IDCMP,       idcmp,
+        WA_Flags,       flags,
+        WA_MinWidth,    100,
+        WA_MinHeight,   50,
+        WA_MaxWidth,    -1,
+        WA_MaxHeight,   -1,
+        TAG_END);
+
+    if (!w) {
+        PyErr_SetString(PyExc_RuntimeError, "OpenWindowTags returned NULL");
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)w);
+}
+
+
+static PyObject *
+py_close_window(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    if (!PyArg_ParseTuple(args, "k", &handle)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (w) CloseWindow(w);
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+py_window_geom(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    if (!PyArg_ParseTuple(args, "k", &handle)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+    /* Return outer x,y,w,h + inner (drawing area) x,y,w,h */
+    return Py_BuildValue("{sisisisisisisisi}",
+                         "left",         (int)w->LeftEdge,
+                         "top",          (int)w->TopEdge,
+                         "width",        (int)w->Width,
+                         "height",       (int)w->Height,
+                         "border_left",  (int)w->BorderLeft,
+                         "border_top",   (int)w->BorderTop,
+                         "inner_width",  (int)(w->Width  - w->BorderLeft - w->BorderRight),
+                         "inner_height", (int)(w->Height - w->BorderTop  - w->BorderBottom));
+}
+
+
+static PyObject *
+py_clear_window(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {"handle", "pen", NULL};
+    unsigned long handle;
+    unsigned long pen = 0;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "k|k", kw, &handle, &pen))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+
+    struct RastPort *rp = w->RPort;
+    LONG old = rp->FgPen;
+    SetAPen(rp, pen);
+    RectFill(rp,
+             w->BorderLeft, w->BorderTop,
+             w->Width  - w->BorderRight  - 1,
+             w->Height - w->BorderBottom - 1);
+    SetAPen(rp, old);
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+py_draw_text(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {"handle", "x", "y", "text", "pen", NULL};
+    unsigned long handle;
+    int x, y;
+    const char *text;
+    unsigned long pen = 1;   /* default text pen */
+    Py_ssize_t textlen;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "kiis#|k", kw,
+            &handle, &x, &y, &text, &textlen, &pen))
+        return NULL;
+
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+
+    struct RastPort *rp = w->RPort;
+    LONG old = rp->FgPen;
+    SetAPen(rp, pen);
+    Move(rp, w->BorderLeft + x, w->BorderTop + y);
+    Text(rp, (STRPTR)text, (LONG)textlen);
+    SetAPen(rp, old);
+    Py_RETURN_NONE;
+}
+
+
+/* Drain one IDCMP message.  Returns dict {class, code, qualifier,
+ * mouse_x, mouse_y} or None if no message pending. */
+static PyObject *
+_msg_to_dict(struct IntuiMessage *msg)
+{
+    return Py_BuildValue("{sksksksisi}",
+                         "class",     (unsigned long)msg->Class,
+                         "code",      (unsigned long)msg->Code,
+                         "qualifier", (unsigned long)msg->Qualifier,
+                         "mouse_x",   (int)msg->MouseX,
+                         "mouse_y",   (int)msg->MouseY);
+}
+
+
+static PyObject *
+py_get_message(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    if (!PyArg_ParseTuple(args, "k", &handle)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+
+    struct IntuiMessage *msg = (struct IntuiMessage *)GetMsg(w->UserPort);
+    if (!msg) Py_RETURN_NONE;
+
+    PyObject *d = _msg_to_dict(msg);
+    ReplyMsg((struct Message *)msg);
+    return d;
+}
+
+
+/* Block until an IDCMP message arrives OR timeout expires (in seconds).
+ * timeout < 0 means forever.  Returns first message dict, or None on
+ * timeout / broken window. */
+static PyObject *
+py_wait_message(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    double timeout = -1.0;
+    if (!PyArg_ParseTuple(args, "k|d", &handle, &timeout)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+
+    struct MsgPort *port = w->UserPort;
+    ULONG win_sig = 1UL << port->mp_SigBit;
+
+    if (timeout < 0) {
+        /* Block forever on the window signal.  Release GIL so other
+         * Python threads can run while we wait. */
+        Py_BEGIN_ALLOW_THREADS
+        Wait(win_sig);
+        Py_END_ALLOW_THREADS
+    } else {
+        /* Poll every Delay(1) tick (20ms) until either a message
+         * arrives or the timeout expires.  IsMsgPortEmpty is a
+         * peek — doesn't consume. */
+        int ticks = (int)(timeout * 50.0);
+        if (ticks < 1) ticks = 1;
+        Py_BEGIN_ALLOW_THREADS
+        while (ticks-- > 0 && IsMsgPortEmpty(port)) {
+            Delay(1);
+        }
+        Py_END_ALLOW_THREADS
+    }
+
+    /* Return the first pending message, if any. */
+    struct IntuiMessage *msg = (struct IntuiMessage *)GetMsg(port);
+    if (!msg) Py_RETURN_NONE;
+    PyObject *d = _msg_to_dict(msg);
+    ReplyMsg((struct Message *)msg);
+    return d;
+}
+
+
+static PyObject *
+py_active_window(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    struct IntuitionBase *ib = (struct IntuitionBase *)IntuitionBase;
+    if (!ib || !ib->ActiveWindow) Py_RETURN_NONE;
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)ib->ActiveWindow);
 }
 
 
@@ -281,6 +507,28 @@ static PyMethodDef amiga_methods[] = {
         "volume_info(path) -> dict from IDOS->Info on a volume lock."},
     {"version",           py_version,           METH_NOARGS,
         "version() -> (name, version, phase)."},
+
+    /* Intuition — real windowed UI */
+    {"open_window",       (PyCFunction)py_open_window,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "open_window(title, left, top, width, height, idcmp, flags) -> handle."},
+    {"close_window",      py_close_window,      METH_VARARGS,
+        "close_window(handle)."},
+    {"window_geom",       py_window_geom,       METH_VARARGS,
+        "window_geom(handle) -> dict with left/top/width/height + inner_*."},
+    {"clear_window",      (PyCFunction)py_clear_window,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "clear_window(handle, pen=0) — fill drawing area with pen."},
+    {"draw_text",         (PyCFunction)py_draw_text,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "draw_text(handle, x, y, text, pen=1) — Text() into rastport."},
+    {"get_message",       py_get_message,       METH_VARARGS,
+        "get_message(handle) -> dict | None — non-blocking IDCMP drain."},
+    {"wait_message",      py_wait_message,      METH_VARARGS,
+        "wait_message(handle, timeout=-1) -> dict | None — block until event."},
+    {"active_window",     py_active_window,     METH_NOARGS,
+        "active_window() -> handle of the currently-active window."},
+
     {NULL, NULL, 0, NULL},
 };
 
@@ -300,6 +548,26 @@ PyInit__amiga(void)
     PyObject *m = PyModule_Create(&amigamodule);
     if (!m) return NULL;
 
+    /* Explicitly open intuition.library + graphics.library and cache
+     * their interfaces.  Uses the classic-style OpenLibrary/GetInterface
+     * inlines that dispatch through IExec.  Silent-continue on failure —
+     * the UI-only entry points will error at first use, exec/dos stay
+     * usable. */
+    if (!IntuitionBase) {
+        IntuitionBase = OpenLibrary("intuition.library", 50);
+        if (IntuitionBase) {
+            IIntuition = (struct IntuitionIFace *)
+                GetInterface(IntuitionBase, "main", 1, NULL);
+        }
+    }
+    if (!GfxBase) {
+        GfxBase = OpenLibrary("graphics.library", 50);
+        if (GfxBase) {
+            IGraphics = (struct GraphicsIFace *)
+                GetInterface(GfxBase, "main", 1, NULL);
+        }
+    }
+
     /* Expose common MEMF_ constants so scripts don't need to hardcode. */
     PyModule_AddIntConstant(m, "MEMF_ANY",     MEMF_ANY);
     PyModule_AddIntConstant(m, "MEMF_PUBLIC",  MEMF_PUBLIC);
@@ -307,6 +575,29 @@ PyInit__amiga(void)
     PyModule_AddIntConstant(m, "MEMF_FAST",    MEMF_FAST);
     PyModule_AddIntConstant(m, "MEMF_LARGEST", MEMF_LARGEST);
     PyModule_AddIntConstant(m, "MEMF_CLEAR",   MEMF_CLEAR);
+
+    /* IDCMP flags — subset useful for Python callers. */
+    PyModule_AddIntConstant(m, "IDCMP_CLOSEWINDOW",    IDCMP_CLOSEWINDOW);
+    PyModule_AddIntConstant(m, "IDCMP_NEWSIZE",        IDCMP_NEWSIZE);
+    PyModule_AddIntConstant(m, "IDCMP_REFRESHWINDOW",  IDCMP_REFRESHWINDOW);
+    PyModule_AddIntConstant(m, "IDCMP_MOUSEBUTTONS",   IDCMP_MOUSEBUTTONS);
+    PyModule_AddIntConstant(m, "IDCMP_MOUSEMOVE",      IDCMP_MOUSEMOVE);
+    PyModule_AddIntConstant(m, "IDCMP_GADGETUP",       IDCMP_GADGETUP);
+    PyModule_AddIntConstant(m, "IDCMP_GADGETDOWN",     IDCMP_GADGETDOWN);
+    PyModule_AddIntConstant(m, "IDCMP_MENUPICK",       IDCMP_MENUPICK);
+    PyModule_AddIntConstant(m, "IDCMP_RAWKEY",         IDCMP_RAWKEY);
+    PyModule_AddIntConstant(m, "IDCMP_VANILLAKEY",     IDCMP_VANILLAKEY);
+    PyModule_AddIntConstant(m, "IDCMP_ACTIVEWINDOW",   IDCMP_ACTIVEWINDOW);
+    PyModule_AddIntConstant(m, "IDCMP_INACTIVEWINDOW", IDCMP_INACTIVEWINDOW);
+
+    /* WFLG_ window-flags. */
+    PyModule_AddIntConstant(m, "WFLG_SIZEGADGET",       WFLG_SIZEGADGET);
+    PyModule_AddIntConstant(m, "WFLG_DRAGBAR",          WFLG_DRAGBAR);
+    PyModule_AddIntConstant(m, "WFLG_DEPTHGADGET",      WFLG_DEPTHGADGET);
+    PyModule_AddIntConstant(m, "WFLG_CLOSEGADGET",      WFLG_CLOSEGADGET);
+    PyModule_AddIntConstant(m, "WFLG_ACTIVATE",         WFLG_ACTIVATE);
+    PyModule_AddIntConstant(m, "WFLG_SIMPLE_REFRESH",   WFLG_SIMPLE_REFRESH);
+    PyModule_AddIntConstant(m, "WFLG_SMART_REFRESH",    WFLG_SMART_REFRESH);
 
     return m;
 }
