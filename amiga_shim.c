@@ -107,6 +107,33 @@ int __gthread_once(int *once, void (*func)(void))
  * that skip locking. Perfect for Phase 1. */
 int __gthread_active_p(void) { return 0; }
 
+/* --- fcntl shim ---------------------------------------------------
+ * Newlib on OS4 doesn't implement fcntl(). CPython's
+ * _Py_set_inheritable uses fcntl(F_GETFD)/fcntl(F_SETFD) to set the
+ * FD_CLOEXEC bit. That's a no-op on AmigaOS (no exec-across-fork),
+ * so return success without doing anything.
+ *
+ * Real fcntl signature: `int fcntl(int fd, int cmd, ...);`
+ * For F_GETFD/F_GETFL we return 0 (no flags set).
+ * For F_SETFD/F_SETFL we return 0 (accepted, no-op).
+ * Anything else we return -1 with ENOSYS. */
+#include <stdarg.h>
+int fcntl(int fd, int cmd, ...)
+{
+    (void)fd;
+    switch (cmd) {
+    case 1:  /* F_GETFD */
+    case 3:  /* F_GETFL */
+        return 0;
+    case 2:  /* F_SETFD */
+    case 4:  /* F_SETFL */
+        return 0;
+    default:
+        errno = ENOSYS;
+        return -1;
+    }
+}
+
 /* --- getrandom shim -----------------------------------------------
  * Python's bootstrap_hash calls getrandom() then falls back to
  * /dev/urandom. OS4 has neither. Provide a weak entropy source

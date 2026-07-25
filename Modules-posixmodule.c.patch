@@ -1,5 +1,5 @@
---- /dev/fd/12	2026-07-24 19:57:05
-+++ Python-3.12.7/Modules/posixmodule.c	2026-07-24 19:53:00
+--- /dev/fd/12	2026-07-24 20:09:36
++++ Python-3.12.7/Modules/posixmodule.c	2026-07-24 20:01:20
 @@ -3061,6 +3061,17 @@
  os_stat_impl(PyObject *module, path_t *path, int dir_fd, int follow_symlinks)
  /*[clinic end generated code: output=7d4976e6f18a59c5 input=01d362ebcc06996b]*/
@@ -18,7 +18,25 @@
      return posix_do_stat(module, "stat", path, dir_fd, follow_symlinks);
  }
  
-@@ -10240,6 +10251,16 @@
+@@ -5339,6 +5350,17 @@
+ os_mkdir_impl(PyObject *module, path_t *path, int mode, int dir_fd)
+ /*[clinic end generated code: output=a70446903abe821f input=a61722e1576fab03]*/
+ {
++    /* AMIGA probe: log mkdir */
++    {
++        static FILE *_pm = NULL;
++        if (!_pm) _pm = fopen("RAM:pymkdir.log", "w");
++        if (_pm) {
++            fprintf(_pm, "mkdir: %s mode=0%o\n",
++                    (path && path->narrow) ? (const char*)path->narrow : "(nullpath)",
++                    mode);
++            fflush(_pm);
++        }
++    }
+     int result;
+ #ifdef MS_WINDOWS
+     int error = 0;
+@@ -10240,6 +10262,16 @@
  os_open_impl(PyObject *module, path_t *path, int flags, int mode, int dir_fd)
  /*[clinic end generated code: output=abc7227888c8bc73 input=ad8623b29acd2934]*/
  {

@@ -1,5 +1,5 @@
---- /dev/fd/12	2026-07-24 19:57:06
-+++ Python-3.12.7/Modules/_io/fileio.c	2026-07-24 19:55:02
+--- /dev/fd/12	2026-07-24 20:09:35
++++ Python-3.12.7/Modules/_io/fileio.c	2026-07-24 20:03:32
 @@ -230,6 +230,22 @@
                           int closefd, PyObject *opener)
  /*[clinic end generated code: output=23413f68e6484bbd input=588aac967e0ba74b]*/
@@ -23,3 +23,62 @@
  #ifdef MS_WINDOWS
      Py_UNICODE *widename = NULL;
  #else
+@@ -395,6 +411,19 @@
+             if (async_err)
+                 goto error;
+ 
++            /* AMIGA probe: log open() result — did the actual C-level
++             * open syscall succeed, and if not what errno? */
++            {
++                static FILE *_pox = NULL;
++                if (!_pox) _pox = fopen("RAM:pyopen2.log", "w");
++                if (_pox) {
++                    fprintf(_pox, "open(%s, 0x%x) -> fd=%d errno=%d\n",
++                            name ? name : "(nullname)",
++                            (unsigned)flags, self->fd, errno);
++                    fflush(_pox);
++                }
++            }
++
+             if (self->fd < 0) {
+                 PyErr_SetFromErrnoWithFilenameObject(PyExc_OSError, nameobj);
+                 goto error;
+@@ -707,16 +736,38 @@
+     if (self->fd < 0)
+         return err_closed();
+ 
++    /* AMIGA probe: log readall calls */
++    {
++        static FILE *_pr = NULL;
++        if (!_pr) _pr = fopen("RAM:pyread.log", "w");
++        if (_pr) {
++            fprintf(_pr, "readall: fd=%d\n", self->fd);
++            fflush(_pr);
++        }
++    }
++
+     Py_BEGIN_ALLOW_THREADS
+     _Py_BEGIN_SUPPRESS_IPH
+ #ifdef MS_WINDOWS
+     pos = _lseeki64(self->fd, 0L, SEEK_CUR);
+ #else
+     pos = lseek(self->fd, 0L, SEEK_CUR);
++    {
++        int _seekerr = errno;
++        FILE *_pr = fopen("RAM:pyread.log", "a");
++        if (_pr) { fprintf(_pr, "  lseek(SEEK_CUR) -> %lld errno=%d\n",
++                           (long long)pos, _seekerr); fflush(_pr); fclose(_pr); }
++    }
+ #endif
+     _Py_END_SUPPRESS_IPH
+     fstat_result = _Py_fstat_noraise(self->fd, &status);
+     Py_END_ALLOW_THREADS
++
++    {
++        FILE *_pr = fopen("RAM:pyread.log", "a");
++        if (_pr) { fprintf(_pr, "  fstat -> %d st_size=%lld\n",
++                           fstat_result, (long long)status.st_size); fflush(_pr); fclose(_pr); }
++    }
+ 
+     if (fstat_result == 0)
+         end = status.st_size;

@@ -256,6 +256,45 @@ and `posix_do_stat`/`mkdir_impl` to find which specific syscall
 returns 78. Once fixed, encodings imports and Py_Initialize
 completes → sys.stdout wires up → `print(x)` finally emits output.
 
+### Update: fcntl shimmed, errno 78 → 38
+
+Traced further: FileIO opens `DH1:lib/encodings/__init__.py` (fd=7,
+success). But then `_Py_set_inheritable(fd, 0, ...)` in fileio.c
+calls `fcntl(fd, F_GETFD)/F_SETFD` — newlib on OS4 returns ENOSYS.
+Added `fcntl()` shim in amiga_shim.c that no-ops F_GETFD/F_SETFD/
+F_GETFL/F_SETFL (FD_CLOEXEC is meaningless on AmigaOS anyway,
+no fork/exec model).
+
+After rebuild, errno changes: `OSError(78,'F') → OSError(38,'S')`
+in later retry attempts. Something else deeper in the pipeline
+returns errno 38 (also "not implemented" flavour on newlib). Same
+strerror-truncation-to-one-char quirk — the '78' errno printed
+"F" (as in "Function..."), the '38' errno prints "S" (as in
+"Socket..."? "System call..."?).
+
+## Reference implementation: amigazen/amigapython
+
+Discovered mid-session that
+[github.com/amigazen/amigapython](https://github.com/amigazen/amigapython)
+is a Python 2.8.18 port for classic 68k AmigaOS with a full
+`Source/Amiga/` shim layer (5500 lines) that reimplements the
+POSIX I/O primitives (`_open.c`, `_read.c`, `_write.c`, `_fstat.c`,
+`_lseek.c`, `stat.c`, `chmod.c`, `access.c`, `getpid.c`,
+`gettimeofday.c`, `strerror.c`, ...) directly against AmigaDOS
+BPTRs — no reliance on newlib's syscalls at all.
+
+For our port that's a treasure trove. Their `unixemul.c` handles
+exactly the same "translate POSIX to AmigaDOS" problem we're
+solving one shim at a time. Even though it's Python 2.x and 68k,
+the C is almost verbatim reusable — the AmigaDOS API is
+identical across 68k and OS4 PPC when you use `proto/dos.h`.
+
+**Next-session strategy shift**: instead of continuing to shim
+individual missing syscalls one at a time as we hit them, port
+their `_open.c`/`_read.c`/`_fstat.c`/`_lseek.c` into our
+amiga_shim.c wholesale. Should unblock most of Phase 2 in a
+single build.
+
 ## Silent-init diagnostic notes (checked in for handoff)
 
 Also huge infrastructure win: bridge daemon on OS4 launched in
