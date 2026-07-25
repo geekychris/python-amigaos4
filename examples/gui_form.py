@@ -91,9 +91,10 @@ def main():
     body = fn()
 
     # Step 3: show the result in a follow-up requester.
-    # Amiga requester bodies are line-limited; if too long we chunk.
+    # AmigaDOS shell caps single-arg length ~350 bytes even with proper
+    # *n escaping, so chunk aggressively — 6-8 short lines fits nicely.
     lines = body.splitlines()
-    MAX_LINES = 12
+    MAX_LINES = 8
     for i in range(0, len(lines), MAX_LINES):
         chunk = "\n".join(lines[i:i + MAX_LINES])
         show_result(f"{title} (page {i // MAX_LINES + 1})", chunk)

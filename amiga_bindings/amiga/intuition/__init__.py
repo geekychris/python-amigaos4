@@ -262,16 +262,44 @@ def list_windows():
 # Requesters — EasyRequest actually works in Phase A via RequestChoice
 # ---------------------------------------------------------------------------
 
+# AmigaDOS shell escaping — `*` is the escape char.  `*n` becomes a
+# newline inside a "..."-quoted argument, `*"` a literal quote,
+# `**` a literal asterisk.
+def _dos_quote(s):
+    """Escape a Python string for use inside an AmigaDOS "..." arg."""
+    s = s.replace("*", "**")     # escape asterisks first
+    s = s.replace('"', '*"')     # then quotes
+    s = s.replace("\r", "")      # strip carriage returns
+    s = s.replace("\n", "*n")    # convert newlines to AmigaDOS *n
+    return f'"{s}"'
+
+
+# AmigaDOS shell command lines are hard-capped around 512 bytes on
+# OS4.  RequestChoice tolerates ~400 bytes of body text before its
+# arg parser rejects the line.  Keep a healthy margin.
+_MAX_BODY_LEN = 350
+
+
 def EasyRequest(title, body, buttons=("OK",)):
     """Pop a modal requester.  Returns the index of the chosen button
     (0-based, though Amiga convention is that button 0 is the rightmost
     / cancel).
 
     Phase A: shells out to `RequestChoice` (stock OS4 CLI tool that pops
-    a real Intuition requester).  Returns int result from stdout."""
+    a real Intuition requester).  Returns int result from stdout.
+
+    Handles multi-line bodies by converting newlines to AmigaDOS `*n`
+    escapes.  Bodies longer than ~350 bytes are truncated + a "..."
+    suffix appended — the shell rejects longer single args.
+    """
     from amiga.dos import _run_capture
-    btn_args = " ".join(f'"{b}"' for b in buttons)
-    cmd = f'RequestChoice TITLE "{title}" BODY "{body}" GADGETS {btn_args}'
+    if body is None:
+        body = ""
+    if len(body) > _MAX_BODY_LEN:
+        body = body[: _MAX_BODY_LEN - 4] + "\n..."
+    btn_args = " ".join(_dos_quote(str(b)) for b in buttons)
+    cmd = (f"RequestChoice TITLE {_dos_quote(str(title))} "
+           f"BODY {_dos_quote(body)} GADGETS {btn_args}")
     rc, text = _run_capture(cmd)
     try:
         return int(text.strip().splitlines()[-1])
@@ -282,9 +310,9 @@ def EasyRequest(title, body, buttons=("OK",)):
 def RequestFile(title="Select file", initial_path="", pattern="#?"):
     """Open a file requester.  Phase A: uses `RequestFile` CLI tool."""
     from amiga.dos import _run_capture
-    cmd = f'RequestFile TITLE "{title}" PATTERN "{pattern}"'
+    cmd = f"RequestFile TITLE {_dos_quote(title)} PATTERN {_dos_quote(pattern)}"
     if initial_path:
-        cmd += f' DRAWER "{initial_path}"'
+        cmd += f" DRAWER {_dos_quote(initial_path)}"
     rc, text = _run_capture(cmd)
     return text.strip() or None
 
