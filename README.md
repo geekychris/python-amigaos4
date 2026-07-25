@@ -140,3 +140,55 @@ the stdlib packaging is already correct.
 
 Half-time single-engineer estimate: 4-6 months to "usable for scripts",
 8-12 months to "pip-installs-things-and-they-mostly-work".
+
+## Silent-init diagnostic notes (checked in for handoff)
+
+### Established facts
+
+- `-V` / `-h` / `--version` produce their fprintf output normally.
+- Any codepath that goes through `Py_Initialize` (`-c code`, script file
+  execution, even `-c "1/0"` or `-c "syntax error!"`) exits with **no output
+  written anywhere** — verified by redirecting to `RAM:sout`, file exists but
+  is empty.
+- `os.write(1, b"raw\n")` in a Python script is also silent.
+- A Python script that does `os.open("RAM:marker", O_WRONLY|O_CREAT)` does NOT
+  create the marker file — so Python isn't even reaching the script body.
+- A hello.c compiled with the *exact same* toolchain flags
+  (`-mcrt=newlib -mhard-float -mcpu=440`) prints stdout+stderr normally.
+- No Grim Reaper dialog appears; `amiga_last_crash` returns "no crash data".
+- `why` in the OS4 shell after python-os4 exits says "The last command
+  did not set a return code" — so the return-code propagation from newlib
+  exit() to AmigaDOS shell is also broken (separate issue).
+
+### Diagnosis in progress
+
+Added file-based probes to `pymain_main` in `Modules/main.c` that write
+stage markers to `RAM:pymain.log`:
+
+- `A: enter pymain_main` — proves `main() → pymain_main` runs
+- `B: after pymain_init exitcode=? exception=?` — proves `Py_Initialize`
+  returned (with what status)
+- `C: about to Py_RunMain`
+- `D: Py_RunMain returned N`
+
+The next session's first action should be:
+1. Deploy the probe-instrumented binary (it built cleanly here but the bridge
+   transfer failed mid-way — QEMU restart needed).
+2. Run any `-c ...` and check `type RAM:pymain.log`.
+3. Whichever letter is the last one seen pinpoints the silent-death region.
+4. Add finer-grained probes to bisect.
+
+### Working hypothesis
+
+Most likely: `Py_Initialize` completes (status.exitcode = 0, exception = 0),
+`init_sys_streams` binds `sys.stdout` to fd 1 via `create_stdio`, but
+`_io_FileIO_write_impl` on OS4 doesn't reach the underlying `write(fd, ...)`.
+Suspect newlib's clib-side FILE* → BPTR translation for fds 1/2 that we
+inherited from the shell process, vs. how Python opens its `_io.FileIO`
+BufferedWriter. Might be a `fdopen` issue (our shim declares the prototype
+but the underlying newlib impl on OS4 may not support duping fd 1).
+
+Alternative: `Py_Initialize` FAILS silently (some `_PyStatus_ERR` return that
+gets swallowed because `pymain_exit_error` uses `Py_ExitStatusException`
+which writes to `stderr` — which on our build might be closed / redirected
+to void).
