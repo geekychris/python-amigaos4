@@ -63,6 +63,19 @@ int   pclose(FILE *stream);
 #define O_DIRECTORY 0
 #endif
 
+/* getrandom(2) — Linux/glibc syscall Python's bootstrap_hash uses.
+ * Neither newlib nor OS4 ship an equivalent, and there's no /dev/urandom.
+ * Our shim in amiga_shim.c fills the buffer with weak time-based entropy
+ * — good enough for dict-hash-seed; NOT cryptographic. */
+#include <sys/types.h>
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 1
+#endif
+#ifndef GRND_RANDOM
+#define GRND_RANDOM   2
+#endif
+ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
+
 #ifdef __cplusplus
 }
 #endif

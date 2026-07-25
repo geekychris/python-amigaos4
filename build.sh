@@ -84,7 +84,8 @@ if [ ! -f config.status ]; then
         ac_cv_func_pipe=no \
         ac_cv_func_execv=no \
         ac_cv_have_working_getgrgid_r=no \
-        ac_cv_have_working_getpwuid_r=no
+        ac_cv_have_working_getpwuid_r=no \
+        ac_cv_func_getrandom=yes
 fi
 
 if [ "$STAGE" = "make" ]; then

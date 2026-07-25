@@ -1,6 +1,6 @@
---- /dev/fd/11	2026-07-24 17:23:00
-+++ Python-3.12.7/Modules/main.c	2026-07-24 17:11:05
-@@ -731,7 +731,21 @@
+--- /dev/fd/11	2026-07-24 19:09:21
++++ Python-3.12.7/Modules/main.c	2026-07-24 18:40:59
+@@ -731,7 +731,23 @@
  static int
  pymain_main(_PyArgv *args)
  {
@@ -15,6 +15,8 @@
 +    if (_amp) {
 +        fprintf(_amp, "B: after pymain_init exitcode=%d exception=%d\n",
 +                (int)status.exitcode, (int)_PyStatus_EXCEPTION(status));
++        fprintf(_amp, "  err_msg: %s\n", status.err_msg ? status.err_msg : "(none)");
++        fprintf(_amp, "  func:    %s\n", status.func    ? status.func    : "(none)");
 +        fflush(_amp);
 +        fclose(_amp);
 +    }
@@ -22,7 +24,7 @@
      if (_PyStatus_IS_EXIT(status)) {
          pymain_free();
          return status.exitcode;
-@@ -740,7 +754,14 @@
+@@ -740,7 +756,14 @@
          pymain_exit_error(status);
      }
  

@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
 #include "amiga_shim.h"
 
 /* Newlib on OS4 has setenv but no unsetenv. Use setenv with empty
@@ -105,6 +106,33 @@ int __gthread_once(int *once, void (*func)(void))
 /* Returning 0 = "single-threaded" makes libgcc take fast paths
  * that skip locking. Perfect for Phase 1. */
 int __gthread_active_p(void) { return 0; }
+
+/* --- getrandom shim -----------------------------------------------
+ * Python's bootstrap_hash calls getrandom() then falls back to
+ * /dev/urandom. OS4 has neither. Provide a weak entropy source
+ * (time + PID + linear congruential churning). NOT cryptographic —
+ * fine for Python's hash-seed randomization use case which just
+ * needs unpredictability across restarts. */
+
+#include <time.h>
+#include <unistd.h>
+
+ssize_t getrandom(void *buf, size_t buflen, unsigned int flags)
+{
+    (void)flags;
+    if (!buf) { errno = EFAULT; return -1; }
+    /* Mix time, our address (ASLR-ish), and a spinning LCG. */
+    unsigned long seed = (unsigned long)time(NULL);
+    seed ^= (unsigned long)(uintptr_t)buf;
+    seed ^= (unsigned long)(uintptr_t)&seed << 3;
+    unsigned char *out = (unsigned char *)buf;
+    for (size_t i = 0; i < buflen; i++) {
+        /* Numerical Recipes LCG constants — good enough for hash seed */
+        seed = seed * 1664525UL + 1013904223UL;
+        out[i] = (unsigned char)((seed >> 16) & 0xFF);
+    }
+    return (ssize_t)buflen;
+}
 
 /* Mutex family. Single-threaded → all no-ops that always succeed. */
 typedef int gthread_mutex_t;
