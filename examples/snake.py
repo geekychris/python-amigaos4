@@ -10,10 +10,23 @@ Everything else is verbatim.  Uses the amiga.turtle shim on top of
 _amiga's Intuition wrappers — real Amiga window, real keyboard, real
 draw calls.
 """
-import sys, os
+import sys, os, traceback
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
-from random import randrange
+def _uncaught(t_, e, tb):
+    with open("T:snake.err", "w") as f:
+        f.write(str(t_.__name__) + ": " + str(e) + "\n")
+        traceback.print_exception(t_, e, tb, file=f)
+sys.excepthook = _uncaught
+
+# stdlib `random` imports hashlib.sha512 -> _sha2 which isn't a
+# builtin on our Python port yet.  Use a tiny inline LCG that's
+# perfectly adequate for game-scale randomness.
+_seed = [0x12345678]
+def randrange(lo, hi):
+    _seed[0] = (_seed[0] * 1103515245 + 12345) & 0x7fffffff
+    return lo + (_seed[0] % (hi - lo))
+
 import amiga.turtle as t
 
 
@@ -28,19 +41,11 @@ class vector:
 
 
 def square(x, y, size, name):
-    """Draw filled square at (x,y) with given size and colour name."""
-    t.up()
-    t.goto(x, y)
-    t.down()
-    t.begin_fill()
-    t.color(name)
-    # Use the underlying fill primitive: shim's dot() with size gives
-    # a centred square; freegames.square wants a bottom-left origin one.
-    # Approximate by drawing a filled rect via 4 forward+left calls.
-    for _ in range(4):
-        t.forward(size)
-        t.left(90)
-    t.end_fill()
+    """Draw a filled square at turtle (x, y) with the given size + colour."""
+    # amiga.turtle ships a native filled_square helper — begin_fill/end_fill
+    # remain stubs on the shim (turtle's fill flood-algorithm isn't
+    # ported); this bypasses them and calls fill_rect directly.
+    t.filled_square(x, y, size, name)
 
 
 # --- game -------------------------------------------------------------
@@ -81,6 +86,8 @@ def move():
 
 
 t.setup(420, 420, 370, 0)
+t.title("Python Snake")
+t.bgcolor("white")
 t.hideturtle()
 t.tracer(0)
 t.listen()

@@ -386,8 +386,28 @@ def _cleanup():
     _state["closed"] = True
 
 
+# --- extras for freegames — filled shapes ------------------------------
+
+def filled_square(x, y, size, col=None):
+    """Draw a filled square with its bottom-left corner at turtle (x, y).
+    Handy for freegames' `square(x, y, size, name)` helper — the outline-
+    only version you get from forward+left doesn't actually fill.
+    """
+    if col is not None:
+        pen = _pen_for(col)
+    else:
+        pen = _state["fg_pen"]
+    if _state["handle"] is None:
+        return
+    x1, y1 = _to_screen(x, y + size)   # top-left in screen coords
+    x2, y2 = _to_screen(x + size, y)   # bottom-right
+    _n.fill_rect(_state["handle"], x1, y1, x2, y2, pen)
+
+
 # --- no-ops so freegames' setups don't crash --------------------------
 
+# begin_fill / end_fill are stubs — use filled_square directly for real
+# fills in the meantime.
 def begin_fill(): pass
 def end_fill():   pass
 def screensize(*a, **kw): return _state["width"], _state["height"]
