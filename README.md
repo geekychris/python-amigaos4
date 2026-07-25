@@ -7,13 +7,22 @@ compile cleanly; POSIX shim layer covers the newlib gaps; gthread stubs cover
 libgcc's emutls dependency. Cross-linker produces a **7 MB stripped PowerPC ELF
 python.exe binary** ready to deploy to `DH1:python-os4` on the OS4 HDF.
 
-**Runtime verified** under QEMU sam460ex on OS4 4.1 FE with Update 3's
-`newlib.library.kmod` (53.87) swapped into `SYS:Kickstart`:
+**Phase 2 complete.** Interpreter loads its stdlib and runs Python
+code end-to-end on QEMU sam460ex / OS4 4.1 FE:
 
 ```
-1.SYS:> DH1:python-os4 --version
-Python 3.12.7
+1.SYS:> DH1:python-os4 RAM:hello.py
+3.12.7 (main, Jul 25 2026, 03:13:02) [GCC 11.5.0]
+---
+amigaos
+['', 'DH1:python312.zip', 'DH1:lib', 'DH1:lib/lib-dynload']
+1267650600228229401496703205376
 ```
+
+`sys.version`, `sys.platform` ("amigaos"), `sys.path` with correct
+Amiga volume syntax, and pure-Python bignum all work. `print()`
+emits through `sys.stdout` properly. Interactive REPL, `-c` code,
+and script files all functional.
 
 The binary is linked against `newlib.library 53.68`; the SDK and Update 3
 both ship 53.87 which satisfies it. Base OS4.1 FE ships 53.30 (fails
