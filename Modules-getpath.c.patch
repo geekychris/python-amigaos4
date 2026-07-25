@@ -1,0 +1,14 @@
+--- /dev/fd/12	2026-07-24 19:25:30
++++ Python-3.12.7/Modules/getpath.c	2026-07-24 19:17:27
+@@ -878,6 +878,11 @@
+         !decode_to_dict(dict, "os_name", "nt") ||
+ #elif defined(__APPLE__)
+         !decode_to_dict(dict, "os_name", "darwin") ||
++#elif defined(AMIGA)
++        /* AmigaOS 4.x PPC — different path DELIM (';' not ':') so
++         * getpath.py needs an amigaos branch. See our python-amigaos4
++         * port docs for the reasoning (': is used inside volume paths). */
++        !decode_to_dict(dict, "os_name", "amigaos") ||
+ #else
+         !decode_to_dict(dict, "os_name", "posix") ||
+ #endif

@@ -141,6 +141,52 @@ the stdlib packaging is already correct.
 Half-time single-engineer estimate: 4-6 months to "usable for scripts",
 8-12 months to "pip-installs-things-and-they-mostly-work".
 
+## Session update: init_fs_encoding root-caused and half-fixed
+
+Silent init cause = `_Py_HashRandomization_Init` failed to get entropy.
+Fixed: getrandom() shim + `ac_cv_func_getrandom=yes` in configure.
+
+Next failure surfaced: `init_fs_encoding` — Python couldn't find the
+`encodings` module. Chain of causes:
+
+1. `getpath.py` had no `amigaos` branch — MACHDEP=AmigaOS fell through
+   both `posix` and `nt` blocks so STDLIB_SUBDIR/ZIP_LANDMARK were
+   undefined. **Fixed** with a new branch (see
+   `Modules-getpath.py.patch` + `Modules-getpath.c.patch` which also
+   makes `getpath.c` decode `os_name = "amigaos"` when `defined(AMIGA)`).
+2. Path DELIM (unix `:`) collides with Amiga volume syntax (`DH1:`).
+   Fixed by picking `DELIM = ';'` in the new branch.
+3. Path join produced `DH1:/foo` (invalid on Amiga — should be
+   `DH1:foo`). **Fixed** in `Python-fileutils.c.patch`: `join_relfile`
+   now treats trailing `:` as an implicit separator, same as `SEP`.
+
+After all three fixes, `RAM:pypath.log` (from the added dump probe —
+see `Python-initconfig.c.patch`) shows correct paths:
+
+```
+Python path configuration:
+  home           = DH1:
+  program_name   = DH1:python-os4
+  stdlib_dir     = DH1:lib
+  prefix         = DH1:
+  filesystem_encoding = utf-8
+  module_search_paths (3 entries):
+    [0] DH1:python312.zip
+    [1] DH1:lib
+    [2] DH1:lib/lib-dynload
+```
+
+The zip exists at `DH1:python312.zip`. Sys.path[0] points at it.
+But init still fails with `failed to get the Python codec of the
+filesystem encoding` — **zipimport isn't reading the zip contents**.
+Next step: either debug zipimport on our port, or ship the stdlib
+as flat .py files at `DH1:lib/` (sys.path[1]) as a workaround.
+
+Also huge infrastructure win: bridge daemon on OS4 launched in
+TCP mode (`amiga-bridge TCP 2345`) with QEMU hostfwd — file
+transfers went from 30 KB/s (with mid-transfer failures) to
+200 KB/s (rock-solid).
+
 ## Silent-init diagnostic notes (checked in for handoff)
 
 ### Established facts

@@ -1,0 +1,33 @@
+--- /dev/fd/12	2026-07-24 19:25:31
++++ Python-3.12.7/Python/initconfig.c	2026-07-24 19:15:14
+@@ -3120,6 +3120,30 @@
+ {
+     PyObject *exc = _PyErr_GetRaisedException(tstate);
+ 
++    /* AMIGA probe: also dump to a file since stderr is unreliable on
++     * OS4 while we're still bringing up sys.stderr. */
++    FILE *_amp = fopen("RAM:pypath.log", "w");
++    if (_amp) {
++        const PyConfig *cfg = _PyInterpreterState_GetConfig(tstate->interp);
++        fprintf(_amp, "Python path configuration:\n");
++        if (cfg->home)            { fprintf(_amp, "  home           = %ls\n", cfg->home); }
++        if (cfg->pythonpath_env)  { fprintf(_amp, "  pythonpath_env = %ls\n", cfg->pythonpath_env); }
++        if (cfg->program_name)    { fprintf(_amp, "  program_name   = %ls\n", cfg->program_name); }
++        if (cfg->stdlib_dir)      { fprintf(_amp, "  stdlib_dir     = %ls\n", cfg->stdlib_dir); }
++        if (cfg->executable)      { fprintf(_amp, "  executable     = %ls\n", cfg->executable); }
++        if (cfg->prefix)          { fprintf(_amp, "  prefix         = %ls\n", cfg->prefix); }
++        if (cfg->exec_prefix)     { fprintf(_amp, "  exec_prefix    = %ls\n", cfg->exec_prefix); }
++        if (cfg->base_prefix)     { fprintf(_amp, "  base_prefix    = %ls\n", cfg->base_prefix); }
++        if (cfg->platlibdir)      { fprintf(_amp, "  platlibdir     = %ls\n", cfg->platlibdir); }
++        fprintf(_amp, "  filesystem_encoding = %ls\n", cfg->filesystem_encoding ? cfg->filesystem_encoding : L"(null)");
++        fprintf(_amp, "  module_search_paths (%d entries):\n", (int)cfg->module_search_paths.length);
++        for (Py_ssize_t i = 0; i < cfg->module_search_paths.length; i++) {
++            fprintf(_amp, "    [%d] %ls\n", (int)i, cfg->module_search_paths.items[i]);
++        }
++        fflush(_amp);
++        fclose(_amp);
++    }
++
+     PySys_WriteStderr("Python path configuration:\n");
+ 
+ #define DUMP_CONFIG(NAME, FIELD) \

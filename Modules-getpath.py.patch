@@ -1,0 +1,28 @@
+--- /dev/fd/12	2026-07-24 19:25:29
++++ Python-3.12.7/Modules/getpath.py	2026-07-24 19:17:17
+@@ -200,6 +200,25 @@
+     DELIM = ';'
+     SEP = '\\'
+ 
++elif os_name == 'amigaos':
++    # AmigaOS uses ':' inside volume paths (DH1:foo), so it can't
++    # double as a PYTHONPATH delimiter the way it does on POSIX.
++    # Use ';' like Windows. SEP is '/' — Amiga accepts either dir
++    # separator once we're past the volume name. Layout mirrors
++    # the flat Windows convention (no `lib/` subdir), since we
++    # ship python312.zip and everything else in one dir.
++    BUILDDIR_TXT = 'pybuilddir.txt'
++    BUILD_LANDMARK = 'Modules/Setup.local'
++    DEFAULT_PROGRAM_NAME = f'python{VERSION_MAJOR}'
++    STDLIB_SUBDIR = 'lib'
++    STDLIB_LANDMARKS = [f'{STDLIB_SUBDIR}/os.py', f'{STDLIB_SUBDIR}/os.pyc']
++    PLATSTDLIB_LANDMARK = f'{STDLIB_SUBDIR}/lib-dynload'
++    BUILDSTDLIB_LANDMARKS = ['Lib/os.py']
++    VENV_LANDMARK = 'pyvenv.cfg'
++    ZIP_LANDMARK = f'python{VERSION_MAJOR}{VERSION_MINOR}.zip'
++    DELIM = ';'
++    SEP = '/'
++
+ 
+ # ******************************************************************************
+ # HELPER FUNCTIONS (note that we prefer C functions for performance)

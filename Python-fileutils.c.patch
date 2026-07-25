@@ -1,0 +1,16 @@
+--- /dev/fd/12	2026-07-24 19:25:30
++++ Python-3.12.7/Python/fileutils.c	2026-07-24 19:22:28
+@@ -2319,7 +2319,12 @@
+             wcscpy(buffer, dirname);
+         }
+         size_t relstart = dirlen;
+-        if (dirlen > 1 && dirname[dirlen - 1] != SEP) {
++        /* AmigaOS: volume paths end with ':' (e.g. DH1:). Joining
++         * "DH1:" + "foo" must become "DH1:foo" not "DH1:/foo".
++         * Also treat trailing ':' as an implicit separator. */
++        int prev_is_sep = dirname[dirlen - 1] == SEP
++                       || dirname[dirlen - 1] == ':';
++        if (dirlen > 1 && !prev_is_sep) {
+             buffer[dirlen] = SEP;
+             relstart += 1;
+         }
