@@ -11,6 +11,9 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
+#include <string.h>
+#include <stdlib.h>
+
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
@@ -488,6 +491,341 @@ py_active_window(PyObject *self, PyObject *Py_UNUSED(ignored))
 
 
 /* --------------------------------------------------------------------- */
+/* Composite modal dialogs (StringGadgets + OK/Cancel buttons).           */
+/*                                                                        */
+/* py_open_dialog(title, fields) opens a small window with one            */
+/* StringGadget per field plus OK / Cancel buttons at the bottom.  Users  */
+/* fill the fields, click OK (or press Return), we harvest each           */
+/* StringInfo->Buffer into a Python dict and return it.  Cancel returns   */
+/* None.  This replaces the wizardy chain of individual RequestString     */
+/* popups in earlier apps.                                                */
+/* --------------------------------------------------------------------- */
+
+#define DIALOG_MAX_FIELDS   16
+#define DIALOG_GADGET_H     14
+#define DIALOG_ROW_SPACING  6
+#define DIALOG_LABEL_W      110
+
+#define GID_OK        1000
+#define GID_CANCEL    1001
+#define GID_FIELD_BASE 1
+
+/* Local strdup — newlib's isn't visible without a POSIX feature-test
+ * macro we don't set.  Uses AllocVec so both label and buffer free
+ * paths in close_dialog can go through FreeVec. */
+static char *
+dup_str(const char *s)
+{
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *r = AllocVec(n + 1, MEMF_ANY);
+    if (r) memcpy(r, s, n + 1);
+    return r;
+}
+
+typedef struct DlgField {
+    char             *label;         /* strdup'd */
+    struct Gadget    *gadget;
+    struct StringInfo *sinfo;
+    char             *buffer;        /* alloc'd, maxlen+1 */
+    char             *undo;          /* alloc'd, maxlen+1 */
+    int               maxlen;
+} DlgField;
+
+typedef struct Dialog {
+    struct Window *win;
+    DlgField       fields[DIALOG_MAX_FIELDS];
+    int            n_fields;
+    struct Gadget *g_ok;
+    struct Gadget *g_cancel;
+    char          *ok_text;      /* strdup'd */
+    char          *cancel_text;
+} Dialog;
+
+
+static struct StringInfo *
+mk_string_info(char *buffer, char *undo, int maxlen)
+{
+    struct StringInfo *si = AllocVec(sizeof(struct StringInfo), MEMF_ANY | MEMF_CLEAR);
+    if (!si) return NULL;
+    si->Buffer     = (UBYTE *)buffer;
+    si->UndoBuffer = (UBYTE *)undo;
+    si->BufferPos  = 0;
+    si->MaxChars   = maxlen;
+    si->DispPos    = 0;
+    return si;
+}
+
+
+static struct Gadget *
+mk_string_gadget(struct Gadget *prev, int x, int y, int w, int h,
+                 int gid, struct StringInfo *si)
+{
+    struct Gadget *g = AllocVec(sizeof(struct Gadget), MEMF_ANY | MEMF_CLEAR);
+    if (!g) return NULL;
+    g->NextGadget    = NULL;
+    g->LeftEdge      = x;
+    g->TopEdge       = y;
+    g->Width         = w;
+    g->Height        = h;
+    g->Flags         = GFLG_GADGHCOMP;
+    g->Activation    = GACT_RELVERIFY | GACT_STRINGCENTER;
+    g->GadgetType    = GTYP_STRGADGET;
+    g->SpecialInfo   = (APTR)si;
+    g->GadgetID      = gid;
+    if (prev) prev->NextGadget = g;
+    return g;
+}
+
+
+static struct Gadget *
+mk_bool_gadget(struct Gadget *prev, int x, int y, int w, int h,
+               int gid, const char *label, struct IntuiText *itext_storage)
+{
+    struct Gadget *g = AllocVec(sizeof(struct Gadget), MEMF_ANY | MEMF_CLEAR);
+    if (!g) return NULL;
+    itext_storage->FrontPen  = 1;
+    itext_storage->BackPen   = 0;
+    itext_storage->DrawMode  = JAM1;
+    itext_storage->LeftEdge  = 4;
+    itext_storage->TopEdge   = 3;
+    itext_storage->ITextFont = NULL;
+    itext_storage->IText     = (STRPTR)label;
+    itext_storage->NextText  = NULL;
+
+    g->NextGadget    = NULL;
+    g->LeftEdge      = x;
+    g->TopEdge       = y;
+    g->Width         = w;
+    g->Height        = h;
+    g->Flags         = GFLG_GADGHCOMP;
+    g->Activation    = GACT_RELVERIFY;
+    g->GadgetType    = GTYP_BOOLGADGET;
+    g->GadgetText    = itext_storage;
+    g->GadgetID      = gid;
+    if (prev) prev->NextGadget = g;
+    return g;
+}
+
+
+/* Storage for OK/Cancel IntuiTexts — one per dialog. */
+typedef struct DlgButtonText {
+    struct IntuiText ok, cancel;
+} DlgButtonText;
+
+
+static PyObject *
+py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {"title", "fields", "ok_label", "cancel_label",
+                         "left", "top", NULL};
+    const char *title = "Dialog";
+    PyObject *fields_list = NULL;
+    const char *ok_label = "OK";
+    const char *cancel_label = "Cancel";
+    int left = 100, top = 60;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sO|ssii", kw,
+            &title, &fields_list, &ok_label, &cancel_label, &left, &top))
+        return NULL;
+
+    if (!PyList_Check(fields_list) && !PyTuple_Check(fields_list)) {
+        PyErr_SetString(PyExc_TypeError, "fields must be list of (label, default, maxlen)");
+        return NULL;
+    }
+    Py_ssize_t n = PySequence_Length(fields_list);
+    if (n < 1 || n > DIALOG_MAX_FIELDS) {
+        PyErr_Format(PyExc_ValueError,
+                     "fields must have 1..%d entries", DIALOG_MAX_FIELDS);
+        return NULL;
+    }
+
+    Dialog *dlg = AllocVec(sizeof(Dialog), MEMF_ANY | MEMF_CLEAR);
+    if (!dlg) { PyErr_NoMemory(); return NULL; }
+    dlg->n_fields    = (int)n;
+    dlg->ok_text     = dup_str(ok_label);
+    dlg->cancel_text = dup_str(cancel_label);
+    DlgButtonText *dbt = AllocVec(sizeof(DlgButtonText), MEMF_ANY | MEMF_CLEAR);
+
+    /* Parse each field spec + build the gadget chain. */
+    struct Gadget *chain_head = NULL;
+    struct Gadget *chain_tail = NULL;
+    int y_cursor = 22;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *spec = PySequence_GetItem(fields_list, i);
+        const char *label;
+        const char *default_text = "";
+        int maxlen = 128;
+        if (!PyArg_ParseTuple(spec, "s|si", &label, &default_text, &maxlen)) {
+            Py_DECREF(spec);
+            FreeVec(dlg);
+            return NULL;
+        }
+        Py_DECREF(spec);
+        if (maxlen < 4) maxlen = 4;
+        if (maxlen > 512) maxlen = 512;
+
+        DlgField *f = &dlg->fields[i];
+        f->label  = dup_str(label);
+        f->maxlen = maxlen;
+        f->buffer = AllocVec(maxlen + 1, MEMF_ANY | MEMF_CLEAR);
+        f->undo   = AllocVec(maxlen + 1, MEMF_ANY | MEMF_CLEAR);
+        if (default_text && *default_text) {
+            int len = (int)strlen(default_text);
+            if (len > maxlen) len = maxlen;
+            memcpy(f->buffer, default_text, len);
+            f->buffer[len] = '\0';
+        }
+        f->sinfo  = mk_string_info(f->buffer, f->undo, maxlen);
+        f->gadget = mk_string_gadget(chain_tail,
+                                     DIALOG_LABEL_W, y_cursor,
+                                     360, DIALOG_GADGET_H,
+                                     GID_FIELD_BASE + (int)i, f->sinfo);
+        if (!chain_head) chain_head = f->gadget;
+        chain_tail = f->gadget;
+        y_cursor += DIALOG_GADGET_H + DIALOG_ROW_SPACING;
+    }
+
+    /* OK / Cancel row */
+    y_cursor += DIALOG_ROW_SPACING;
+    dlg->g_ok = mk_bool_gadget(chain_tail, DIALOG_LABEL_W, y_cursor,
+                                80, DIALOG_GADGET_H + 4,
+                                GID_OK, dlg->ok_text, &dbt->ok);
+    if (chain_tail) chain_tail->NextGadget = dlg->g_ok;
+    else            chain_head = dlg->g_ok;
+    dlg->g_cancel = mk_bool_gadget(dlg->g_ok, DIALOG_LABEL_W + 100, y_cursor,
+                                    80, DIALOG_GADGET_H + 4,
+                                    GID_CANCEL, dlg->cancel_text, &dbt->cancel);
+
+    int win_h = y_cursor + DIALOG_GADGET_H + 30;
+    int win_w = DIALOG_LABEL_W + 380;
+
+    dlg->win = OpenWindowTags(NULL,
+        WA_Title,       (Tag)title,
+        WA_Left,        left,
+        WA_Top,         top,
+        WA_InnerWidth,  win_w,
+        WA_InnerHeight, win_h,
+        WA_IDCMP,       IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_VANILLAKEY,
+        WA_Flags,       WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET
+                        | WFLG_ACTIVATE | WFLG_SIMPLE_REFRESH,
+        WA_Gadgets,     chain_head,
+        WA_MinWidth,    win_w,
+        WA_MinHeight,   win_h,
+        TAG_END);
+
+    if (!dlg->win) {
+        PyErr_SetString(PyExc_RuntimeError, "OpenWindowTags failed for dialog");
+        FreeVec(dlg);
+        return NULL;
+    }
+
+    /* Draw the labels to the left of each string gadget. */
+    struct RastPort *rp = dlg->win->RPort;
+    SetAPen(rp, 1);
+    for (int i = 0; i < dlg->n_fields; i++) {
+        int ly = 22 + i * (DIALOG_GADGET_H + DIALOG_ROW_SPACING);
+        Move(rp, dlg->win->BorderLeft + 8,
+                 dlg->win->BorderTop + ly + DIALOG_GADGET_H - 3);
+        Text(rp, (STRPTR)dlg->fields[i].label,
+                 (LONG)strlen(dlg->fields[i].label));
+    }
+
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)dlg);
+}
+
+
+static PyObject *
+py_run_dialog(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    if (!PyArg_ParseTuple(args, "k", &handle)) return NULL;
+    Dialog *dlg = (Dialog *)(uintptr_t)handle;
+    if (!dlg || !dlg->win) Py_RETURN_NONE;
+
+    struct MsgPort *port = dlg->win->UserPort;
+    ULONG sig = 1UL << port->mp_SigBit;
+
+    int result = -1;   /* -1 = still running, 0 = cancel, 1 = OK */
+    while (result < 0) {
+        Py_BEGIN_ALLOW_THREADS
+        Wait(sig);
+        Py_END_ALLOW_THREADS
+
+        struct IntuiMessage *msg;
+        while ((msg = (struct IntuiMessage *)GetMsg(port))) {
+            ULONG cls = msg->Class;
+            struct Gadget *g = (struct Gadget *)msg->IAddress;
+            UWORD code = msg->Code;
+            ReplyMsg((struct Message *)msg);
+
+            if (cls == IDCMP_CLOSEWINDOW) {
+                result = 0;
+                break;
+            }
+            if (cls == IDCMP_GADGETUP && g) {
+                if (g->GadgetID == GID_OK)     { result = 1; break; }
+                if (g->GadgetID == GID_CANCEL) { result = 0; break; }
+                /* String gadget confirmed with Return — treat as OK */
+                if (g->GadgetType == GTYP_STRGADGET) { result = 1; break; }
+            }
+            if (cls == IDCMP_VANILLAKEY && code == 27) {
+                result = 0;
+                break;
+            }
+        }
+    }
+
+    if (result != 1) Py_RETURN_NONE;
+
+    /* Harvest field text into a dict. */
+    PyObject *d = PyDict_New();
+    if (!d) return NULL;
+    for (int i = 0; i < dlg->n_fields; i++) {
+        DlgField *f = &dlg->fields[i];
+        PyObject *v = PyUnicode_DecodeLatin1(f->buffer,
+                                              strlen(f->buffer), "replace");
+        if (!v || PyDict_SetItemString(d, f->label, v) < 0) {
+            Py_XDECREF(v);
+            Py_DECREF(d);
+            return NULL;
+        }
+        Py_DECREF(v);
+    }
+    return d;
+}
+
+
+static PyObject *
+py_close_dialog(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    if (!PyArg_ParseTuple(args, "k", &handle)) return NULL;
+    Dialog *dlg = (Dialog *)(uintptr_t)handle;
+    if (!dlg) Py_RETURN_NONE;
+
+    if (dlg->win) {
+        CloseWindow(dlg->win);
+        dlg->win = NULL;
+    }
+    for (int i = 0; i < dlg->n_fields; i++) {
+        DlgField *f = &dlg->fields[i];
+        if (f->label)  FreeVec(f->label);
+        if (f->gadget) FreeVec(f->gadget);
+        if (f->sinfo)  FreeVec(f->sinfo);
+        if (f->buffer) FreeVec(f->buffer);
+        if (f->undo)   FreeVec(f->undo);
+    }
+    if (dlg->g_ok)     FreeVec(dlg->g_ok);
+    if (dlg->g_cancel) FreeVec(dlg->g_cancel);
+    if (dlg->ok_text)     FreeVec(dlg->ok_text);
+    if (dlg->cancel_text) FreeVec(dlg->cancel_text);
+    FreeVec(dlg);
+    Py_RETURN_NONE;
+}
+
+
+/* --------------------------------------------------------------------- */
 /* Graphics primitives — line/rect/dot/circle for turtle-style drawing.  */
 /* --------------------------------------------------------------------- */
 
@@ -650,6 +988,16 @@ static PyMethodDef amiga_methods[] = {
         "wait_message(handle, timeout=-1) -> dict | None — block until event."},
     {"active_window",     py_active_window,     METH_NOARGS,
         "active_window() -> handle of the currently-active window."},
+
+    /* Composite dialog with StringGadgets */
+    {"open_dialog",       (PyCFunction)py_open_dialog,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "open_dialog(title, fields=[(label, default, maxlen), ...], "
+        "ok_label='OK', cancel_label='Cancel', left=100, top=60) -> handle."},
+    {"run_dialog",        py_run_dialog,        METH_VARARGS,
+        "run_dialog(handle) -> {label: text} on OK, None on Cancel."},
+    {"close_dialog",      py_close_dialog,      METH_VARARGS,
+        "close_dialog(handle) — free gadgets + close window."},
 
     /* Graphics primitives — turtle-style drawing */
     {"draw_line",         (PyCFunction)py_draw_line,

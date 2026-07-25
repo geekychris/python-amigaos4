@@ -36,14 +36,25 @@ Full calendar + notes app.  SQLite storage at
 attendees, notes, url, tags.  Notes have title, body, tags.
 Tag-based search across both.
 
-Data entry today uses a chain of `RequestString` popups (one real
-Intuition dialog per field) — will become a single composite dialog
-when StringGadget support lands in `_amiga`.
+Data entry is a single composite dialog with real Intuition
+StringGadgets (one for each field: title, date, time, attendees,
+notes, url, tags) plus OK / Cancel buttons at the bottom.  Backed
+by `_amiga.open_dialog / run_dialog / close_dialog` which manage
+Gadget + StringInfo + buffer allocation and drain the IDCMP loop
+for you.  Old wizard-style RequestString chain is kept as a
+fallback for `_amiga` builds without dialog support.
 
 ```
 setenv PYTHONHOME DH1: ; setenv PYTHONPATH DH1:lib
 DH1:python-os4 DH1:pytests/examples/planner.py
 ```
+
+![planner calendar view](screenshots/planner_calendar.png)
+
+Calendar month grid — day-of-week headers, 5x7 cell grid with borders,
+day numbers 1-31, `< prev / > next` month navigation, and a menu bar
+across the top.  Days with events highlighted in a different pen.
+`C` returns to calendar from list/notes views.
 
 ![planner main window](screenshots/planner_main.png)
 
