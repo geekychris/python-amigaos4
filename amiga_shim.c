@@ -107,6 +107,25 @@ int __gthread_once(int *once, void (*func)(void))
  * that skip locking. Perfect for Phase 1. */
 int __gthread_active_p(void) { return 0; }
 
+/* --- ioctl shim ---------------------------------------------------
+ * OS4 newlib routes ioctl through bsdsocket only — it returns
+ * ENOTSOCK (errno 38) when called on a regular file fd. CPython's
+ * _Py_set_inheritable tries ioctl(FIOCLEX) first, and only falls
+ * back to fcntl if errno is ENOTTY/EACCES — not ENOTSOCK. So the
+ * whole set_inheritable path errors even though FD_CLOEXEC is
+ * meaningless on AmigaOS. Shim ioctl to return 0 for the
+ * FIOCLEX/FIONCLEX / FIONBIO cases which have no real effect on
+ * Amiga file handles anyway. Anything unrecognised falls through
+ * to ENOTTY so Python takes its fallback path. */
+int ioctl(int fd, unsigned long request, ...)
+{
+    (void)fd; (void)request;
+    /* Common cases: FIOCLEX = 0x20006601, FIONCLEX = 0x20006602,
+     * FIONBIO = 0x8004667e. Just always claim success — none of
+     * these have meaningful effect on AmigaDOS file handles. */
+    return 0;
+}
+
 /* --- fcntl shim ---------------------------------------------------
  * Newlib on OS4 doesn't implement fcntl(). CPython's
  * _Py_set_inheritable uses fcntl(F_GETFD)/fcntl(F_SETFD) to set the
