@@ -20,8 +20,11 @@
 #include <proto/graphics.h>
 #include <intuition/intuition.h>
 #include <intuition/intuitionbase.h>
+#include <intuition/screens.h>
 #include <graphics/text.h>
 #include <graphics/rastport.h>
+#include <graphics/view.h>
+#include <utility/tagitem.h>
 
 
 /* -lauto is supposed to auto-open these library-interface pairs, but
@@ -485,6 +488,125 @@ py_active_window(PyObject *self, PyObject *Py_UNUSED(ignored))
 
 
 /* --------------------------------------------------------------------- */
+/* Graphics primitives — line/rect/dot/circle for turtle-style drawing.  */
+/* --------------------------------------------------------------------- */
+
+static PyObject *
+py_draw_line(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {"handle", "x1", "y1", "x2", "y2", "pen", NULL};
+    unsigned long handle;
+    int x1, y1, x2, y2;
+    unsigned long pen = 1;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "kiiii|k", kw,
+            &handle, &x1, &y1, &x2, &y2, &pen))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+
+    struct RastPort *rp = w->RPort;
+    LONG old = rp->FgPen;
+    SetAPen(rp, pen);
+    Move(rp, w->BorderLeft + x1, w->BorderTop + y1);
+    Draw(rp, w->BorderLeft + x2, w->BorderTop + y2);
+    SetAPen(rp, old);
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+py_fill_rect(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kw[] = {"handle", "x1", "y1", "x2", "y2", "pen", NULL};
+    unsigned long handle;
+    int x1, y1, x2, y2;
+    unsigned long pen = 1;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "kiiii|k", kw,
+            &handle, &x1, &y1, &x2, &y2, &pen))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) Py_RETURN_NONE;
+    /* Normalise so x1<=x2, y1<=y2 (RectFill demands that on OS4). */
+    if (x1 > x2) { int t = x1; x1 = x2; x2 = t; }
+    if (y1 > y2) { int t = y1; y1 = y2; y2 = t; }
+    struct RastPort *rp = w->RPort;
+    LONG old = rp->FgPen;
+    SetAPen(rp, pen);
+    RectFill(rp,
+             w->BorderLeft + x1, w->BorderTop + y1,
+             w->BorderLeft + x2, w->BorderTop + y2);
+    SetAPen(rp, old);
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+py_dot(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    /* Draw a filled square as a stand-in for a circle — good enough
+     * for the pixel-scale dots freegames wants. */
+    static char *kw[] = {"handle", "x", "y", "size", "pen", NULL};
+    unsigned long handle;
+    int x, y, size;
+    unsigned long pen = 1;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "kiii|k", kw,
+            &handle, &x, &y, &size, &pen))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w || size <= 0) Py_RETURN_NONE;
+    int r = size / 2;
+    struct RastPort *rp = w->RPort;
+    LONG old = rp->FgPen;
+    SetAPen(rp, pen);
+    RectFill(rp,
+             w->BorderLeft + x - r, w->BorderTop + y - r,
+             w->BorderLeft + x + r, w->BorderTop + y + r);
+    SetAPen(rp, old);
+    Py_RETURN_NONE;
+}
+
+
+/* Palette management: use ObtainBestPen against the window's screen
+ * colormap so we get sensible colours on 8/16/32-bit Workbench screens
+ * without stomping on the shared palette. */
+static PyObject *
+py_obtain_pen(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    int r, g, b;  /* 0..255 */
+    if (!PyArg_ParseTuple(args, "kiii", &handle, &r, &g, &b))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w || !w->WScreen) Py_RETURN_NONE;
+
+    struct ColorMap *cm = w->WScreen->ViewPort.ColorMap;
+    ULONG R = ((ULONG)(r & 0xFF)) * 0x01010101UL;
+    ULONG G = ((ULONG)(g & 0xFF)) * 0x01010101UL;
+    ULONG B = ((ULONG)(b & 0xFF)) * 0x01010101UL;
+    LONG pen = ObtainBestPen(cm, R, G, B,
+                             OBP_Precision, PRECISION_GUI,
+                             OBP_FailIfBad, FALSE,
+                             TAG_END);
+    if (pen < 0) Py_RETURN_NONE;
+    return PyLong_FromLong(pen);
+}
+
+
+static PyObject *
+py_release_pen(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    int pen;
+    if (!PyArg_ParseTuple(args, "ki", &handle, &pen))
+        return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w || !w->WScreen || pen < 0) Py_RETURN_NONE;
+    ReleasePen(w->WScreen->ViewPort.ColorMap, pen);
+    Py_RETURN_NONE;
+}
+
+
+/* --------------------------------------------------------------------- */
 /* Module definition                                                     */
 /* --------------------------------------------------------------------- */
 
@@ -528,6 +650,21 @@ static PyMethodDef amiga_methods[] = {
         "wait_message(handle, timeout=-1) -> dict | None — block until event."},
     {"active_window",     py_active_window,     METH_NOARGS,
         "active_window() -> handle of the currently-active window."},
+
+    /* Graphics primitives — turtle-style drawing */
+    {"draw_line",         (PyCFunction)py_draw_line,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "draw_line(handle, x1, y1, x2, y2, pen=1) — Move+Draw."},
+    {"fill_rect",         (PyCFunction)py_fill_rect,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "fill_rect(handle, x1, y1, x2, y2, pen=1) — RectFill."},
+    {"dot",               (PyCFunction)py_dot,
+                                                METH_VARARGS | METH_KEYWORDS,
+        "dot(handle, x, y, size, pen=1) — filled square, size×size, centred."},
+    {"obtain_pen",        py_obtain_pen,        METH_VARARGS,
+        "obtain_pen(handle, r, g, b) -> pen index (0..255).  RGB is 8-bit each."},
+    {"release_pen",       py_release_pen,       METH_VARARGS,
+        "release_pen(handle, pen) — return pen to shared colormap."},
 
     {NULL, NULL, 0, NULL},
 };
