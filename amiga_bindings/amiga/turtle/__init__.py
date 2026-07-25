@@ -24,9 +24,12 @@ coord system inside every draw call.
 Not implemented: begin_fill/end_fill (draws outlines only for now),
 turtle shapes, stamps, custom fonts, real Screen class.
 """
+import atexit
 import math
-import time
+import signal
+import sys
 import threading
+import time
 
 try:
     import _amiga as _n
@@ -125,6 +128,37 @@ def _to_screen(tx, ty):
 
 # --- window lifecycle --------------------------------------------------
 
+_cleanup_registered = False
+
+
+def _install_cleanup_hooks():
+    """Wire _cleanup() to atexit + SIGINT/SIGTERM so a script that dies
+    unexpectedly (KeyboardInterrupt, crash, Amiga Break) still releases
+    the window, pens, and userport signal bit.  Idempotent."""
+    global _cleanup_registered
+    if _cleanup_registered:
+        return
+    atexit.register(_cleanup)
+    # SIGINT is what Break <pid> C sends; wrap the default handler so we
+    # cleanup first then re-raise KeyboardInterrupt.
+    def _sig_cleanup(signum, frame):
+        _cleanup()
+        # Re-raise as KeyboardInterrupt so Python surfaces it normally.
+        raise KeyboardInterrupt()
+    try:
+        signal.signal(signal.SIGINT, _sig_cleanup)
+    except (ValueError, OSError):
+        pass
+    # Uncaught-exception hook: cleanup before Python's default excepthook
+    # prints the traceback (otherwise the window lingers).
+    _prev_hook = sys.excepthook
+    def _except_cleanup(exc_type, exc, tb):
+        _cleanup()
+        _prev_hook(exc_type, exc, tb)
+    sys.excepthook = _except_cleanup
+    _cleanup_registered = True
+
+
 def setup(width=400, height=300, startx=None, starty=None):
     """Turtle setup(): open the window."""
     _state["width"] = int(width)
@@ -141,6 +175,7 @@ def setup(width=400, height=300, startx=None, starty=None):
             idcmp=(_n.IDCMP_CLOSEWINDOW | _n.IDCMP_VANILLAKEY
                    | _n.IDCMP_MOUSEBUTTONS | _n.IDCMP_RAWKEY),
         )
+        _install_cleanup_hooks()
 
 
 def title(txt):
