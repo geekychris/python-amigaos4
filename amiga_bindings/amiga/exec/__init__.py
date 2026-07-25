@@ -26,6 +26,17 @@ from collections import namedtuple
 
 from amiga import NotImplementedYet
 
+# ---------------------------------------------------------------------------
+# Optional native backend: _amiga C module (Phase 6).  When present, we call
+# straight into IExec/IDOS.  Otherwise fall back to shell-outs.
+# ---------------------------------------------------------------------------
+try:
+    import _amiga as _native
+    HAS_NATIVE = True
+except ImportError:
+    _native = None
+    HAS_NATIVE = False
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -223,10 +234,18 @@ def ReplyMsg(msg, response=None):
 
 def FindTask(name=None):
     """Return TaskInfo for a task by name; None if no match.  With
-    name=None, returns info about the current Python task (Phase A:
-    approximated from threading + os.getpid)."""
+    name=None, returns info about the current Python task.
+
+    Uses _amiga.find_task when the native module is available;
+    otherwise falls back to a threading-based approximation."""
+    if HAS_NATIVE:
+        got = _native.find_task(name)
+        if got is None:
+            return None
+        nm, pri, addr = got
+        return TaskInfo(id=addr, name=nm, priority=pri,
+                        state="Ready", type="task", cli_command="")
     if name is None:
-        # Current-task approximation
         try:
             tid = os.getpid()
         except OSError:
@@ -240,9 +259,15 @@ def FindTask(name=None):
 
 
 def list_tasks():
-    """Enumerate tasks in the system by shelling out to `Status`.
+    """Enumerate tasks in the system.
 
-    Returns a list of TaskInfo tuples."""
+    Native path: walks ExecBase->TaskReady + TaskWait via _amiga.list_tasks.
+    Fallback path: shells out to the `Status FULL` DOS command and parses."""
+    if HAS_NATIVE:
+        return [TaskInfo(id=0, name=n, priority=p, state=s,
+                         type="task", cli_command="")
+                for (n, p, s) in _native.list_tasks()]
+
     from amiga.dos import _run_capture
     rc, text = _run_capture("Status FULL")
     if rc != 0:
@@ -252,8 +277,6 @@ def list_tasks():
         s = line.strip()
         if not s or s.startswith(("Process", "-", "=")):
             continue
-        # Status output rows: "Process N: loaded as command: <name>"
-        # or "Process N: Priority=X ..." — parse loosely.
         if s.lower().startswith("process") and ":" in s:
             head, _, rest = s.partition(":")
             try:

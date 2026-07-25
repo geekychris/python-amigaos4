@@ -62,6 +62,9 @@ if [ ! -f config.status ]; then
     # Configure copies Modules/Setup.local from the srcdir into the
     # builddir. Stash it in the srcdir before we run configure.
     cp /work/setup.local /work/'"$SRC"'/Modules/Setup.local
+    # Ship our custom module sources into Modules/ so setup.local can
+    # reference them by plain filename (avoids absolute-path Makefile bugs).
+    cp /work/_amigamodule.c /work/'"$SRC"'/Modules/
     echo "=== configure ==="
     ../'"$SRC"'/configure \
         --build=aarch64-unknown-linux-gnu \
@@ -93,6 +96,8 @@ if [ "$STAGE" = "make" ]; then
     # every time. Setup.local is only consulted from the build dir,
     # not from srcdir, so we overwrite it after configure runs.
     cp -f /work/setup.local Modules/Setup.local
+    # Also refresh our custom module sources each make cycle.
+    cp -f /work/_amigamodule.c ../'"$SRC"'/Modules/
     # Compile our POSIX shims. Use --whole-archive around the .a
     # so every symbol gets pulled into the link unconditionally.
     # Plain -l is subject to standard archive-scan rules (only

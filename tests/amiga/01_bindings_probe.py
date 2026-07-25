@@ -84,7 +84,11 @@ T.section("amiga.exec — introspection")
 me = ex.FindTask()
 T.check(me is not None, "FindTask(None) returns current task")
 if me is not None:
-    T.check_eq(me.name, "python", "task name is python")
+    # With Phase 6 native backend, this returns the real CLI task name
+    # (e.g. "Background CLI").  Without native, our fallback synthesises
+    # "python".  Just check it's a non-empty string.
+    T.check(isinstance(me.name, str) and len(me.name) > 0,
+             f"task name is non-empty str (got {me.name!r})")
 
 
 T.section("amiga.intuition — sim mode round-trip")

@@ -28,6 +28,8 @@ select selectmodule.c
 binascii binascii.c
 unicodedata unicodedata.c
 _socket socketmodule.c
+zlib zlibmodule.c -lz
+_amiga _amigamodule.c
 
 # ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*
@@ -50,7 +52,6 @@ _gdbm
 _lzma
 _sqlite3
 _tkinter
-zlib
 _bz2
 audioop
 ossaudiodev
