@@ -1,6 +1,20 @@
---- /dev/fd/12	2026-07-24 19:25:30
-+++ Python-3.12.7/Python/fileutils.c	2026-07-24 19:22:28
-@@ -2319,7 +2319,12 @@
+--- /dev/fd/12	2026-07-24 19:57:04
++++ Python-3.12.7/Python/fileutils.c	2026-07-24 19:40:22
+@@ -2158,6 +2158,13 @@
+     }
+     return 1;
+ #else
++    /* AmigaOS: paths containing a ':' before any '/' are absolute
++     * (VOLUME:path or ASSIGN:path). Without this, Python treats
++     * "DH1:lib" as relative and prepends CWD, so imports never
++     * find the stdlib at the location the finder was told about. */
++    for (const wchar_t *p = path; *p && *p != SEP; p++) {
++        if (*p == L':') return 1;
++    }
+     return (path[0] == SEP);
+ #endif
+ }
+@@ -2319,7 +2326,12 @@
              wcscpy(buffer, dirname);
          }
          size_t relstart = dirlen;

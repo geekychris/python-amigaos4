@@ -1,0 +1,37 @@
+--- /dev/fd/12	2026-07-24 19:57:05
++++ Python-3.12.7/Modules/posixmodule.c	2026-07-24 19:53:00
+@@ -3061,6 +3061,17 @@
+ os_stat_impl(PyObject *module, path_t *path, int dir_fd, int follow_symlinks)
+ /*[clinic end generated code: output=7d4976e6f18a59c5 input=01d362ebcc06996b]*/
+ {
++    /* AMIGA probe: log every os.stat() call to see what Python's
++     * import machinery is really probing. path->narrow is the utf-8
++     * form of the path Python thinks it's asking about. */
++    static FILE *_ps = NULL;
++    if (!_ps) _ps = fopen("RAM:pystat.log", "w");
++    if (_ps) {
++        if (path && path->narrow) fprintf(_ps, "stat: %s\n", (const char*)path->narrow);
++        else if (path && path->fd >= 0) fprintf(_ps, "fstat: fd=%d\n", path->fd);
++        else fprintf(_ps, "stat: (null path)\n");
++        fflush(_ps);
++    }
+     return posix_do_stat(module, "stat", path, dir_fd, follow_symlinks);
+ }
+ 
+@@ -10240,6 +10251,16 @@
+ os_open_impl(PyObject *module, path_t *path, int flags, int mode, int dir_fd)
+ /*[clinic end generated code: output=abc7227888c8bc73 input=ad8623b29acd2934]*/
+ {
++    /* AMIGA probe: log all os.open() calls */
++    static FILE *_po = NULL;
++    if (!_po) _po = fopen("RAM:pyopen.log", "w");
++    if (_po) {
++        if (path && path->narrow)
++            fprintf(_po, "open: %s flags=0x%x\n", (const char*)path->narrow, flags);
++        else
++            fprintf(_po, "open: (weird path) flags=0x%x\n", flags);
++        fflush(_po);
++    }
+     int fd;
+     int async_err = 0;
+ #ifdef HAVE_OPENAT

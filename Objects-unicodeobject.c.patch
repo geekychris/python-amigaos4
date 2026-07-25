@@ -1,6 +1,6 @@
---- /dev/fd/12	2026-07-24 19:34:35
-+++ Python-3.12.7/Objects/unicodeobject.c	2026-07-24 19:31:53
-@@ -15449,8 +15449,35 @@
+--- /dev/fd/12	2026-07-24 19:57:06
++++ Python-3.12.7/Objects/unicodeobject.c	2026-07-24 19:50:54
+@@ -15449,8 +15449,66 @@
          return -1;
      }
  
@@ -18,12 +18,43 @@
 +            PyObject *ptype, *pvalue, *ptraceback;
 +            PyErr_Fetch(&ptype, &pvalue, &ptraceback);
 +            PyErr_NormalizeException(&ptype, &pvalue, &ptraceback);
++            if (ptype) {
++                PyObject *ts = PyObject_Str(ptype);
++                if (ts) {
++                    const char *tsm = PyUnicode_AsUTF8(ts);
++                    fprintf(_pcl, "  exc type: %s\n", tsm ? tsm : "(?)");
++                    Py_DECREF(ts);
++                }
++            }
 +            if (pvalue) {
-+                PyObject *s = PyObject_Str(pvalue);
++                PyObject *s = PyObject_Repr(pvalue);
 +                if (s) {
-+                    const char *msg = PyUnicode_AsUTF8(s);
-+                    fprintf(_pcl, "  exception: %s\n", msg ? msg : "(unprintable)");
++                    Py_ssize_t slen;
++                    const char *msg = PyUnicode_AsUTF8AndSize(s, &slen);
++                    if (msg) {
++                        fprintf(_pcl, "  exc repr: ");
++                        fwrite(msg, 1, slen, _pcl);
++                        fprintf(_pcl, "\n");
++                    }
 +                    Py_DECREF(s);
++                }
++                /* Also errno if present */
++                PyObject *ea = PyObject_GetAttrString(pvalue, "errno");
++                if (ea) {
++                    fprintf(_pcl, "  errno: %ld\n", PyLong_AsLong(ea));
++                    Py_DECREF(ea);
++                }
++                PyObject *sa = PyObject_GetAttrString(pvalue, "strerror");
++                if (sa) {
++                    PyObject *ss = PyObject_Str(sa);
++                    if (ss) {
++                        const char *sm = PyUnicode_AsUTF8(ss);
++                        fprintf(_pcl, "  strerror: %s\n", sm ? sm : "(?)");
++                        Py_DECREF(ss);
++                    }
++                    Py_DECREF(sa);
++                } else {
++                    PyErr_Clear();
 +                }
 +            }
 +            /* Put it back so caller sees it. */

@@ -1,0 +1,25 @@
+--- /dev/fd/12	2026-07-24 19:57:06
++++ Python-3.12.7/Modules/_io/fileio.c	2026-07-24 19:55:02
+@@ -230,6 +230,22 @@
+                          int closefd, PyObject *opener)
+ /*[clinic end generated code: output=23413f68e6484bbd input=588aac967e0ba74b]*/
+ {
++    /* AMIGA probe: log FileIO opens */
++    static FILE *_pio = NULL;
++    if (!_pio) _pio = fopen("RAM:pyio.log", "w");
++    if (_pio) {
++        if (nameobj && PyUnicode_Check(nameobj)) {
++            PyObject *b = PyUnicode_EncodeFSDefault(nameobj);
++            if (b) {
++                fprintf(_pio, "FileIO: mode=%s name=%s\n",
++                        mode, PyBytes_AsString(b));
++                Py_DECREF(b);
++            }
++        } else {
++            fprintf(_pio, "FileIO: mode=%s name=(non-str)\n", mode);
++        }
++        fflush(_pio);
++    }
+ #ifdef MS_WINDOWS
+     Py_UNICODE *widename = NULL;
+ #else

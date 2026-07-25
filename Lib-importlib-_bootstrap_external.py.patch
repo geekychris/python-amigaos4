@@ -1,0 +1,49 @@
+--- /dev/fd/12	2026-07-24 19:57:03
++++ Python-3.12.7/Lib/importlib/_bootstrap_external.py	2026-07-24 19:47:46
+@@ -124,9 +124,21 @@
+ 
+ else:
+     def _path_join(*path_parts):
+-        """Replacement for os.path.join()."""
+-        return path_sep.join([part.rstrip(path_separators)
+-                              for part in path_parts if part])
++        """Replacement for os.path.join().
++        AmigaOS: skip separator insertion after a trailing ':' since
++        volume/assign names already act as separators."""
++        result = ''
++        for part in path_parts:
++            if not part:
++                continue
++            part = part.rstrip(path_separators)
++            if not result:
++                result = part
++            elif result.endswith(':'):
++                result += part
++            else:
++                result += path_sep + part
++        return result
+ 
+ 
+ def _path_split(path):
+@@ -179,7 +191,20 @@
+ else:
+     def _path_isabs(path):
+         """Replacement for os.path.isabs."""
+-        return path.startswith(path_separators)
++        if path.startswith(path_separators):
++            return True
++        # AmigaOS: VOLUME:path and ASSIGN:path are absolute. Any ':'
++        # before the first path separator means we're rooted in a
++        # named volume/assign — that IS absolute on AmigaDOS.
++        colon = path.find(':')
++        if colon > 0:
++            head = path[:colon]
++            for _sep in path_separators:
++                if _sep in head:
++                    break
++            else:
++                return True
++        return False
+ 
+ 
+ def _path_abspath(path):

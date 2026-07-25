@@ -1,0 +1,35 @@
+--- /dev/fd/12	2026-07-24 19:57:02
++++ Python-3.12.7/Lib/posixpath.py	2026-07-24 19:42:59
+@@ -61,7 +61,19 @@
+     """Test whether a path is absolute"""
+     s = os.fspath(s)
+     sep = _get_sep(s)
+-    return s.startswith(sep)
++    if s.startswith(sep):
++        return True
++    # AmigaOS: VOLUME:path and ASSIGN:path are absolute. Any ':'
++    # before the first '/' or '\\' means we're rooted in a named
++    # volume or assign, which is what "absolute" means on AmigaDOS.
++    if isinstance(s, bytes):
++        colon = b':'
++    else:
++        colon = ':'
++    idx = s.find(colon)
++    if idx > 0 and sep not in s[:idx]:
++        return True
++    return False
+ 
+ 
+ # Join pathnames.
+@@ -83,6 +95,11 @@
+             if b.startswith(sep):
+                 path = b
+             elif not path or path.endswith(sep):
++                path += b
++            elif path.endswith(b':' if isinstance(path, bytes) else ':'):
++                # AmigaOS: joining "DH1:" + "lib" is "DH1:lib" not
++                # "DH1:/lib". A trailing ':' is an implicit separator
++                # (volume/assign delimiter).
+                 path += b
+             else:
+                 path += sep + b

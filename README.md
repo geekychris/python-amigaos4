@@ -195,14 +195,68 @@ encodings/*.py}` — files verified present via a small C stat
 probe (opendir + stat both succeed from newlib). **Yet Python's
 import machinery still returns "No module named 'encodings'".**
 
-Not a filesystem or POSIX-shim issue. The frozen `_bootstrap_external`
-Python module (loaded during `Py_Initialize`) can't find on-disk
-modules on our Amiga config, even though its underlying stat/open
-calls work. Probably a wide-string / path-normalisation quirk
-between `config->module_search_paths` (dumped OK) and what the
-finder actually stat()s. Next session: patch `_bootstrap_external`
-or `posixmodule.c` to log every stat/import attempt to a file so
-we can see which specific probe fails.
+### Follow-on session: found + fixed the path-relativization bug
+
+Added a stat-logging probe to `os_stat_impl`. First look at
+`RAM:pystat.log` revealed the smoking gun:
+
+```
+stat: DH1:python312.zip
+stat: DH1:lib                ← direct config path (works)
+stat: Empty:C/DH1:lib        ← Python prepended CWD! Bug.
+```
+
+Python's frozen `_bootstrap_external._path_isabs` didn't recognise
+`DH1:lib` as absolute (unix `isabs` only checks for a leading `/`),
+so `_path_abspath` prepended `getcwd()` → `Empty:C/DH1:lib` (doesn't
+exist).
+
+**Fixed in four places** — every isabs / path-join needed the Amiga
+volume-syntax awareness:
+- `Lib/importlib/_bootstrap_external.py` — `_path_isabs` +
+  `_path_join` (both handle `:` as volume marker / implicit
+  separator)
+- `Lib/posixpath.py` — same for `isabs` + `join`
+- `Python/fileutils.c` — `_Py_isabs` + `join_relfile`
+
+After: `pystat.log` shows the correct sequence:
+```
+stat: DH1:python312.zip
+stat: DH1:lib
+stat: DH1:lib
+stat: DH1:lib/encodings/__init__.py   ← finder is now on target!
+stat: DH1:lib/encodings/__init__.py
+```
+
+### Next wall (post-fix): ENOSYS during import load
+
+FileIO probe (see `Modules-_io-fileio.c.patch`) shows the sequence:
+```
+FileIO: mode=r name=DH1:lib/encodings/__pycache__/__init__.cpython-312.pyc
+FileIO: mode=r name=DH1:lib/encodings/__init__.py
+```
+
+Both opens SUCCEED. But the codec-lookup exception is now:
+```
+exc type: <class 'OSError'>
+exc repr: OSError(78, 'F')
+errno: 78
+strerror: F
+```
+
+Errno 78 = ENOSYS on newlib. Something in the post-open pipeline
+(read/mmap/fstat/mkdir for .pyc cache write?) hits an unimplemented
+syscall. `strerror(78)` returning just `"F"` is suspicious — could
+be a shim/messages-table quirk in newlib rather than the real
+"Function not implemented" string.
+
+Realistic next Phase-2 step (short — probably one focused hour):
+add probes to `_io_FileIO_read_impl`, `_io_FileIO_readall_impl`,
+and `posix_do_stat`/`mkdir_impl` to find which specific syscall
+returns 78. Once fixed, encodings imports and Py_Initialize
+completes → sys.stdout wires up → `print(x)` finally emits output.
+
+## Silent-init diagnostic notes (checked in for handoff)
 
 Also huge infrastructure win: bridge daemon on OS4 launched in
 TCP mode (`amiga-bridge TCP 2345`) with QEMU hostfwd — file
