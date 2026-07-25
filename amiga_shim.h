@@ -77,6 +77,21 @@ int   pclose(FILE *stream);
 ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
 
 /* -------------------------------------------------------------------------
+ * nanosleep — autoconf didn't find it on OS4 newlib, but our shim in
+ * amiga_shim.c provides one via AmigaDOS Delay().  Force-define
+ * HAVE_NANOSLEEP so CPython's pysleep() picks the nanosleep branch
+ * instead of the broken select(0,NULL,NULL,NULL,&tv) fallback.
+ * ---------------------------------------------------------------------- */
+#ifndef HAVE_NANOSLEEP
+#define HAVE_NANOSLEEP 1
+#endif
+/* Newlib on OS4 declares struct timespec but not nanosleep().  Pull
+ * in <time.h> for the struct, then forward-declare nanosleep so
+ * timemodule.c's implicit-function-declaration error goes away. */
+#include <time.h>
+int nanosleep(const struct timespec *req, struct timespec *rem);
+
+/* -------------------------------------------------------------------------
  * Network / socket shims — bsdsocket.library exports the BSD socket API
  * through -lsocket, but a handful of POSIX-mandated constants and helpers
  * aren't in newlib's netdb.h.

@@ -197,3 +197,48 @@ int __gthread_recursive_mutex_unlock (gthread_mutex_t *m) { (void)m; return 0; }
  * itself. It was previously stubbed here for the clib2 attempt where
  * fileutils.c compiled the definition out. With newlib the real
  * definition exists — do NOT redefine here (linker collision). */
+
+
+/* --- nanosleep shim -----------------------------------------------
+ * Autoconf couldn't find nanosleep or clock_nanosleep on OS4 newlib,
+ * so CPython's pysleep() falls through to `select(0, NULL, NULL,
+ * NULL, &tv)` — but bsdsocket.library rejects nfds=0 without setting
+ * errno, so time.sleep() ends up raising OSError [Errno 0].
+ *
+ * Fix: provide a nanosleep() that dispatches to AmigaDOS Delay().
+ * amiga_shim.h #define's HAVE_NANOSLEEP so pysleep picks the
+ * nanosleep branch instead of the broken select one.
+ *
+ * Precision: Delay() takes ticks at 50Hz (20 ms each) on classic and
+ * on OS4.  Sub-tick sleep requests round up to 1 tick, giving 20ms
+ * granularity — more than enough for anything Python typically
+ * sleeps for.  (Threading Event.wait can go finer if needed.)
+ *
+ * Safety: CLAUDE.md warns against Delay(1) as a frame-pacing
+ * primitive under -lauto/newlib; that DSI was inside a tight render
+ * loop hitting the timer 60 times per second.  A user-facing
+ * time.sleep(0.5) is 25 ticks — not tight, not risky. */
+
+#include <proto/dos.h>
+#include <time.h>
+
+int nanosleep(const struct timespec *req, struct timespec *rem)
+{
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    if (!req) { errno = EINVAL; return -1; }
+    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* Convert to 50Hz ticks (round up); minimum 1 tick.
+     * tick_ns = 20_000_000  → sec * 50 + nsec / 20e6, ceil */
+    unsigned long ticks = (unsigned long)req->tv_sec * 50UL;
+    unsigned long extra = (unsigned long)req->tv_nsec / 20000000UL;
+    if (req->tv_nsec % 20000000L != 0) extra++;
+    ticks += extra;
+    if (ticks == 0) ticks = 1;
+
+    Delay(ticks);
+    return 0;
+}

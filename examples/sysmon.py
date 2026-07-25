@@ -19,14 +19,7 @@ import sys, os
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
 import time
-import threading
 import _amiga
-
-# time.sleep() throws OSError on this newlib/OS4 port; use an Event.wait
-# as a portable replacement.
-_sleep_event = threading.Event()
-def _sleep(secs):
-    _sleep_event.wait(timeout=secs)
 
 
 CLEAR = "\x1b[2J\x1b[H"      # ANSI clear + home cursor
@@ -98,7 +91,7 @@ def main():
     try:
         while True:
             draw_frame(interval)
-            _sleep(interval)
+            time.sleep(interval)
     except KeyboardInterrupt:
         print("\nsysmon: goodbye.")
 

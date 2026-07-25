@@ -29,12 +29,6 @@ import time
 import threading
 import amiga.exec as ex
 
-# time.sleep() throws OSError on this OS4 port; use Event.wait as a
-# portable replacement.
-_sleep_event = threading.Event()
-def _sleep(secs):
-    _sleep_event.wait(timeout=secs)
-
 try:
     import _amiga
     HAVE_NATIVE = True
@@ -123,7 +117,7 @@ def client(name, requests, results):
         target = ex.FindPort("PySvc")
         if target is not None:
             break
-        _sleep(0.05)
+        time.sleep(0.05)
     if target is None:
         print(f"[client-{name}] service not found")
         return

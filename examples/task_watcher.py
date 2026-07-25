@@ -17,19 +17,12 @@ import sys, os
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
 import time
-import threading
 
 try:
     import _amiga
 except ImportError:
     print("task_watcher: needs the _amiga native module (Phase 6).")
     sys.exit(1)
-
-# time.sleep() throws OSError on this newlib/OS4 port; use an Event.wait
-# with a timeout as a portable replacement.
-_sleep_event = threading.Event()
-def _sleep(secs):
-    _sleep_event.wait(timeout=secs)
 
 
 def snapshot():
@@ -66,7 +59,7 @@ def main():
 
     try:
         while True:
-            _sleep(interval)
+            time.sleep(interval)
             curr = snapshot()
             spawned, exited, changed = diff(prev, curr)
             now = time.strftime("%H:%M:%S")
