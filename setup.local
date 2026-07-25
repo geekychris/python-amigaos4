@@ -1,8 +1,34 @@
-# CPython Modules/Setup.local for the OS4 Phase-1 bootstrap.
+# CPython Modules/Setup.local for the OS4 Phase-1/2 bootstrap.
 # Copied into build-ppc-amigaos/Modules/Setup.local before make.
 #
-# Disable everything that needs a shim we haven't written yet.
 # Anything commented back in for Phase 2/3/4 stays as-is on rerun.
+
+# ---- Force these C extensions into the interpreter as STATIC builtins ----
+# Rationale: our loader has no dlopen equivalent yet, so .so extension
+# modules are unreachable at import time.  Anything below rides in as part
+# of python.exe itself.
+*static*
+math mathmodule.c
+cmath cmathmodule.c
+_datetime _datetimemodule.c
+_json _json.c
+_random _randommodule.c
+_pickle _pickle.c
+_heapq _heapqmodule.c
+_bisect _bisectmodule.c
+_struct _struct.c
+_csv _csv.c
+_contextvars _contextvarsmodule.c
+_queue _queuemodule.c
+_statistics _statisticsmodule.c
+_opcode _opcode.c
+_zoneinfo _zoneinfo.c
+array arraymodule.c
+select selectmodule.c
+binascii binascii.c
+unicodedata unicodedata.c
+
+# ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*
 _posixsubprocess
 _socket
@@ -38,6 +64,4 @@ _elementtree
 pyexpat
 _uuid
 _asyncio
-_queue
-_zoneinfo
 xxsubtype
