@@ -29,6 +29,36 @@ The Amiga snake sits on top of a stack that starts at `_amiga.fill_rect` (a
 `_amiga.wait_message` which now uses a real **timer.device IORequest** on
 a shared `MsgPort` so the game idles at zero CPU between frames.
 
+## Real productivity app: `planner.py`
+
+Full calendar + notes app.  SQLite storage at
+`DH1:Documents/Planner/planner.db`.  Events have title, date, time,
+attendees, notes, url, tags.  Notes have title, body, tags.
+Tag-based search across both.
+
+Data entry today uses a chain of `RequestString` popups (one real
+Intuition dialog per field) — will become a single composite dialog
+when StringGadget support lands in `_amiga`.
+
+```
+setenv PYTHONHOME DH1: ; setenv PYTHONPATH DH1:lib
+DH1:python-os4 DH1:pytests/examples/planner.py
+```
+
+![planner main window](screenshots/planner_main.png)
+
+Title bar "Python Planner".  Header: `=== Python Planner (events) ===
+0 events, 0 notes`.  Menu bar in blue: `N=NewEvent  M=NewNote
+T=ToggleView  D=Delete  S=Search  Q=Quit`.  Each hotkey pops a real
+Intuition RequestString dialog for that flow's fields — for a new
+event that's a chain of 7 popups (title / date / time / attendees /
+notes / url / tags) all persisted in the sqlite3 DB when done.
+
+Under the hood: **`sqlite3` static-builtin** (SQLite 3.34.0 from the
+walkero SDK), the `sqlite3` stdlib package pushed to `DH1:lib/sqlite3/`,
++ the Python-side `Store` class using `INSERT`/`SELECT` with
+`sqlite3.Row` row factory and LIKE-based tag search.
+
 ## Full demo lineup
 
 Everything below was captured live from OS4 in this session.

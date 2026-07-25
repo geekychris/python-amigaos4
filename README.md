@@ -24,6 +24,7 @@ DH1:> python-os4 pytests/examples/snake.py     # ← real Intuition window
 | Threads (Lock/RLock/Sem/Event/TPE)| `_thread` + threading + concurrent.futures                |
 | zlib decompression               | `zlib` static builtin                                     |
 | pip 24.2 (import + install pure-Py wheels) | bundled + `amiga.pip` shim (subprocess-free)              |
+| **SQLite 3.34.0**                | `_sqlite3` static builtin over SDK's libsqlite3.a         |
 | **Real Intuition windows**       | `_amiga.open_window` / `draw_text` / `wait_message`       |
 | **Turtle graphics compat**       | `amiga.turtle` on top of `_amiga` — runs `freegames.snake`|
 | Native exec/dos introspection    | `_amiga.list_tasks` / `list_libraries` / `avail_mem_summary` |
@@ -134,6 +135,7 @@ Highlights (all real Intuition windows):
 
 | app              | what it does                                        |
 | ---------------- | --------------------------------------------------- |
+| `planner.py`     | **full calendar + notes app** with SQLite storage, tag search, event fields (title/date/time/attendees/notes/url/tags) |
 | `clock.py`       | wallclock + uptime, redrawn every second            |
 | `window_sysmon.py` | live memory/tasks/libraries dashboard             |
 | `hello_ipc.py`   | Amiga MsgPort microservice — worker + 2 clients     |

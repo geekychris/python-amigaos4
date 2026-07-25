@@ -115,7 +115,8 @@ amiga_dos_command("makedir DH1:lib DH1:lib/encodings DH1:lib/collections \\
                     DH1:lib/email DH1:lib/logging DH1:lib/urllib \\
                     DH1:lib/concurrent DH1:lib/concurrent/futures \\
                     DH1:lib/zipfile DH1:lib/zipfile/_path \\
-                    DH1:lib/ensurepip DH1:lib/ensurepip/_bundled")
+                    DH1:lib/ensurepip DH1:lib/ensurepip/_bundled \\
+                    DH1:lib/sqlite3")
 
 amiga_transfer(source="$STDLIB/*.py",              dest="DH1:lib/")
 amiga_transfer(source="$STDLIB/encodings/*.py",    dest="DH1:lib/encodings/")
@@ -133,6 +134,7 @@ amiga_transfer(source="$STDLIB/concurrent/futures/*.py",
 amiga_transfer(source="$STDLIB/zipfile/*.py",      dest="DH1:lib/zipfile/")
 amiga_transfer(source="$STDLIB/zipfile/_path/*.py", dest="DH1:lib/zipfile/_path/")
 amiga_transfer(source="$STDLIB/ensurepip/*.py",    dest="DH1:lib/ensurepip/")
+amiga_transfer(source="$STDLIB/sqlite3/*.py",      dest="DH1:lib/sqlite3/")
 amiga_push_file(
   local_path="$STDLIB/ensurepip/_bundled/pip-24.2-py3-none-any.whl",
   amiga_path="DH1:lib/ensurepip/_bundled/pip-24.2-py3-none-any.whl")
