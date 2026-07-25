@@ -23,6 +23,12 @@ import threading
 
 import amiga.exec as ex
 
+# time.sleep() throws OSError on this OS4 port; use Event.wait as a
+# portable replacement.
+_sleep_event = threading.Event()
+def _sleep(secs):
+    _sleep_event.wait(timeout=secs)
+
 
 def worker(shutdown):
     """A tiny 'service' task listening on a public port."""
@@ -56,7 +62,7 @@ def client():
         target = ex.FindPort("EchoService")
         if target is not None:
             break
-        time.sleep(0.05)
+        _sleep(0.05)
     if target is None:
         print("[client] service never showed up")
         return
