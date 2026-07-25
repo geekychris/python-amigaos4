@@ -76,6 +76,18 @@ int   pclose(FILE *stream);
 #endif
 ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
 
+/* -------------------------------------------------------------------------
+ * Network / socket shims — bsdsocket.library exports the BSD socket API
+ * through -lsocket, but a handful of POSIX-mandated constants and helpers
+ * aren't in newlib's netdb.h.
+ * ---------------------------------------------------------------------- */
+#ifndef INET_ADDRSTRLEN
+#define INET_ADDRSTRLEN  16
+#endif
+#ifndef INET6_ADDRSTRLEN
+#define INET6_ADDRSTRLEN 46
+#endif
+
 #ifdef __cplusplus
 }
 #endif

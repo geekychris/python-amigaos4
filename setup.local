@@ -27,11 +27,11 @@ array arraymodule.c
 select selectmodule.c
 binascii binascii.c
 unicodedata unicodedata.c
+_socket socketmodule.c
 
 # ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*
 _posixsubprocess
-_socket
 _ssl
 _hashlib
 syslog
