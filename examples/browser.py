@@ -23,6 +23,9 @@ import time
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
 import _amiga
+# Patch socket.getaddrinfo / gethostbyname so urllib / http.client work
+# despite newlib's broken resolver on this OS4 build.
+import amiga.netfix   # noqa: install-on-import
 from amiga.ui import (App, Button, Label, ListPanel, Rect,
                        PEN_FG, PEN_BG, PEN_HI, PEN_ACC)
 
@@ -85,18 +88,95 @@ BOOKMARKS = [
 # Fetch + parse
 # ---------------------------------------------------------------------------
 
-def fetch(url, timeout=15):
-    req = urllib_request.Request(url, headers={
-        "User-Agent": "AmigaPython/3.12 (compatible; sam460ex)",
-    })
+import os as _os_for_ping
+import re as _re_for_ping
+
+# `subprocess` is not importable on our reduced build (no
+# _posixsubprocess), so we use os.system for the ping shell-out.
+
+_HOST_IP_CACHE = {}
+_PING_LINE_RE = _re_for_ping.compile(r"\((\d+\.\d+\.\d+\.\d+)\)")
+
+# Keep `os` and `re` names available for the helpers below.
+os = _os_for_ping
+re = _re_for_ping
+
+
+def _resolve_via_ping(host):
+    """Shell out to `ping -c 1 <host>` to get an IP.  Needed on OS4
+    because our Python/newlib build's gethostbyname() is broken (errno
+    78 on every lookup) — but the shell's Roadshow bsdsocket resolver
+    works fine.  Cache the answer per hostname."""
+    if host in _HOST_IP_CACHE:
+        return _HOST_IP_CACHE[host]
+    tmp = f"T:pingout.{os.getpid()}"
+    # OS4 ping supports -c/-i/-n/-q/-s/-v; no -t (timeout) flag.
+    rc = os.system(f"ping -c 1 -n -q {host} >{tmp}")
+    ip = None
     try:
+        with open(tmp) as f:
+            for line in f:
+                m = _PING_LINE_RE.search(line)
+                if m:
+                    ip = m.group(1)
+                    break
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    _HOST_IP_CACHE[host] = ip
+    return ip
+
+
+def _rewrite_url_with_ip(url):
+    """Return (rewritten_url, original_host) or (None, None) if we
+    can't extract or resolve.  Sends the numeric-IP URL back through
+    urllib.request but with the Host header preserved so vhosts still
+    route correctly."""
+    from urllib.parse import urlsplit, urlunsplit
+    p = urlsplit(url)
+    if not p.hostname:
+        return None, None
+    if _PING_LINE_RE.match("(" + p.hostname + ")"):
+        return url, p.hostname   # already numeric
+    ip = _resolve_via_ping(p.hostname)
+    if not ip:
+        return None, p.hostname
+    port = f":{p.port}" if p.port else ""
+    new_net = f"{ip}{port}"
+    return urlunsplit((p.scheme, new_net, p.path, p.query, p.fragment)), p.hostname
+
+
+def fetch(url, timeout=15):
+    def _do(req_url, host_header=None):
+        headers = {"User-Agent": "AmigaPython/3.12 (compatible; sam460ex)"}
+        if host_header:
+            headers["Host"] = host_header
+        req = urllib_request.Request(req_url, headers=headers)
         with urllib_request.urlopen(req, timeout=timeout) as r:
             ct = r.headers.get_content_type()
             body = r.read()
         return ct, body
+
+    try:
+        return _do(url)
     except urllib_error.HTTPError as e:
         return "text/plain", f"HTTP error {e.code}: {e.reason}".encode()
     except urllib_error.URLError as e:
+        # Our Python's DNS resolver is broken (newlib gethostbyname
+        # returns errno 78 on OS4).  Fall back to a shell-out to
+        # `ping` for name resolution + retry with the numeric IP.
+        reason = str(e.reason) if hasattr(e, "reason") else str(e)
+        if any(hint in reason for hint in ("Errno 78", "gaierror",
+                                            "hostname", "resolve",
+                                            "Name or service")):
+            new_url, host = _rewrite_url_with_ip(url)
+            if new_url and new_url != url:
+                try:
+                    return _do(new_url, host_header=host)
+                except Exception as e2:
+                    return "text/plain", (
+                        f"URL error (also failed IP-fallback {new_url}): "
+                        f"{e2}".encode())
         return "text/plain", f"URL error: {e.reason}".encode()
     except Exception as e:
         return "text/plain", f"error: {e.__class__.__name__}: {e}".encode()

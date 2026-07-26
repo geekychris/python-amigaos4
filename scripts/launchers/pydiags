@@ -1,0 +1,7 @@
+; Launcher for pydiags — sets PYTHONHOME/PATH then runs it.
+; Usage:
+;   execute DH1:scripts/pydiags            (interactive TUI)
+;   execute DH1:scripts/pydiags dns google.com  (headless one-shot)
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH DH1:lib
+DH1:python-os4 DH1:pytests/examples/pydiags.py $*

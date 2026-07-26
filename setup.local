@@ -32,6 +32,16 @@ zlib zlibmodule.c -lz
 _amiga _amigamodule.c
 _sqlite3 _sqlite/blob.c _sqlite/connection.c _sqlite/cursor.c _sqlite/microprotocols.c _sqlite/module.c _sqlite/prepare_protocol.c _sqlite/row.c _sqlite/statement.c _sqlite/util.c -lsqlite3
 
+# Hash primitives — no OpenSSL, pure-C fallbacks bundled with CPython.
+# hashlib.py imports these by name; without them http.client's digest-auth
+# path (used by urllib.request via html URLs) refuses to load.
+# _sha3 + _blake2 skipped — sha3 pulls in the HACL* verified-crypto
+# scaffolding (needs krml/types.h) which we don't have; nothing common
+# actually calls hashlib.sha3_*() or hashlib.blake2* anyway.
+_md5 md5module.c _hacl/Hacl_Hash_MD5.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+_sha1 sha1module.c _hacl/Hacl_Hash_SHA1.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+_sha2 sha2module.c _hacl/Hacl_Hash_SHA2.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+
 # ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*
 _posixsubprocess
