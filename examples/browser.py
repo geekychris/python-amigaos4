@@ -19,16 +19,56 @@ sam460ex/newlib, driving a real Intuition window.
 import io
 import sys
 import time
-import urllib.error
-import urllib.request
-from html.parser import HTMLParser
-from xml.etree import ElementTree as ET
 
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
 import _amiga
 from amiga.ui import (App, Button, Label, ListPanel, Rect,
                        PEN_FG, PEN_BG, PEN_HI, PEN_ACC)
+
+
+# ---------------------------------------------------------------------------
+# Lazy imports — urllib pulls in hashlib.sha512 (missing from our build)
+# via http.client's digest-auth path.  Deferring the import means the app
+# still launches even when the network stack is unavailable; if the user
+# actually tries to fetch, we surface a clean error in the transcript
+# instead of dying with a top-level traceback at process startup.
+# ---------------------------------------------------------------------------
+
+_lazy_imports_done = False
+_lazy_error = None
+urllib_request = None
+urllib_error   = None
+HTMLParser     = None
+ET             = None
+
+
+def _lazy_imports():
+    global _lazy_imports_done, _lazy_error
+    global urllib_request, urllib_error, HTMLParser, ET
+    if _lazy_imports_done:
+        return _lazy_error is None
+    _lazy_imports_done = True
+    try:
+        import urllib.request as _ur
+        import urllib.error   as _ue
+        from html.parser import HTMLParser as _HP
+        from xml.etree import ElementTree as _ET
+        urllib_request = _ur
+        urllib_error   = _ue
+        HTMLParser     = _HP
+        ET             = _ET
+        return True
+    except Exception as e:
+        import traceback
+        _lazy_error = f"{type(e).__name__}: {e}"
+        # capture traceback for debug view
+        try:
+            with open("T:browser_import_err.log", "w") as f:
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        return False
 
 
 BOOKMARKS = [
@@ -46,53 +86,57 @@ BOOKMARKS = [
 # ---------------------------------------------------------------------------
 
 def fetch(url, timeout=15):
-    req = urllib.request.Request(url, headers={
+    req = urllib_request.Request(url, headers={
         "User-Agent": "AmigaPython/3.12 (compatible; sam460ex)",
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib_request.urlopen(req, timeout=timeout) as r:
             ct = r.headers.get_content_type()
             body = r.read()
         return ct, body
-    except urllib.error.HTTPError as e:
+    except urllib_error.HTTPError as e:
         return "text/plain", f"HTTP error {e.code}: {e.reason}".encode()
-    except urllib.error.URLError as e:
+    except urllib_error.URLError as e:
         return "text/plain", f"URL error: {e.reason}".encode()
     except Exception as e:
         return "text/plain", f"error: {e.__class__.__name__}: {e}".encode()
 
 
-class _TextOnly(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.buf = io.StringIO()
-        self._skip = 0
-        self._current_link = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "noscript"):
-            self._skip += 1
-        if tag == "a":
-            a = dict(attrs)
-            self._current_link = a.get("href")
-        if tag in ("br", "p", "li", "tr", "h1", "h2", "h3", "h4"):
-            self.buf.write("\n")
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style", "noscript") and self._skip:
-            self._skip -= 1
-        if tag == "a":
-            if self._current_link:
-                self.buf.write(f" <{self._current_link}>")
+def _make_text_only():
+    """Return a fresh HTMLParser subclass instance — done lazily so
+    the class body doesn't run at module-import (HTMLParser may
+    still be None then)."""
+    class _TextOnly(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.buf = io.StringIO()
+            self._skip = 0
             self._current_link = None
-        if tag in ("p", "li", "tr", "h1", "h2", "h3", "h4"):
-            self.buf.write("\n")
 
-    def handle_data(self, data):
-        if self._skip:
-            return
-        # collapse runs of whitespace
-        self.buf.write(" ".join(data.split()) + " ")
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style", "noscript"):
+                self._skip += 1
+            if tag == "a":
+                a = dict(attrs)
+                self._current_link = a.get("href")
+            if tag in ("br", "p", "li", "tr", "h1", "h2", "h3", "h4"):
+                self.buf.write("\n")
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style", "noscript") and self._skip:
+                self._skip -= 1
+            if tag == "a":
+                if self._current_link:
+                    self.buf.write(f" <{self._current_link}>")
+                self._current_link = None
+            if tag in ("p", "li", "tr", "h1", "h2", "h3", "h4"):
+                self.buf.write("\n")
+
+        def handle_data(self, data):
+            if self._skip:
+                return
+            self.buf.write(" ".join(data.split()) + " ")
+    return _TextOnly()
 
 
 def render_html(body_bytes):
@@ -100,7 +144,7 @@ def render_html(body_bytes):
         text = body_bytes.decode("utf-8", errors="replace")
     except Exception:
         text = body_bytes.decode("latin-1", errors="replace")
-    p = _TextOnly()
+    p = _make_text_only()
     try:
         p.feed(text)
     except Exception as e:
@@ -177,6 +221,10 @@ def _t(elem, tag, ns=None):
 # ---------------------------------------------------------------------------
 
 def do_fetch(app, url):
+    if not _lazy_imports():
+        app.state["msg"] = (f"network stack unavailable: {_lazy_error} "
+                            "(see T:browser_import_err.log)")
+        return
     app.state["msg"] = f"fetching {url} ..."
     app.request_redraw()   # let user see the status update before the block
     ct, body = fetch(url)
