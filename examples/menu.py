@@ -54,6 +54,14 @@ DEMOS = [
         "Enumerate ARexx ports + drive REXX inline; text-mode."),
     ("rexx_console",     "ARexx Console (GUI)",
         "Clickable REXX playground: pick a port, send commands live."),
+    ("fileman",          "File Manager",
+        "Dual-pane file manager with Copy/Move/Delete/MkDir."),
+    ("taskkill",         "Task Manager",
+        "Live process list with details + Break signal button."),
+    ("web_notes",        "Web Notes",
+        "Notes editor that also serves them over HTTP on port 8080."),
+    ("browser",          "HTTP Browser",
+        "URL bar + bookmarks + HTML/RSS text-only renderer."),
 ]
 
 
