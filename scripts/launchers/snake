@@ -1,0 +1,5 @@
+; Launcher for snake — sets PYTHONHOME/PATH then runs the demo.
+; Usage:  execute DH1:scripts/snake
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH DH1:lib
+DH1:python-os4 DH1:pytests/examples/snake.py
