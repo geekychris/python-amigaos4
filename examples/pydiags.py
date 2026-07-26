@@ -47,6 +47,17 @@ except ImportError:
     _amiga = None
     HAVE_AMIGA = False
 
+# Bootstrap amiga.netfix so socket.getaddrinfo / gethostbyname work
+# despite newlib's broken resolver on this OS4 build. Best-effort:
+# if the package isn't on the path (running pydiags from a workstation
+# for smoke tests) we skip silently and rely on the host resolver.
+try:
+    sys.path.insert(0, "DH1:pytests/amiga_bindings")
+    import amiga.netfix     # noqa: F401 — installed as side-effect of import
+    HAVE_NETFIX = True
+except ImportError:
+    HAVE_NETFIX = False
+
 
 LOG_FILE   = "T:pydiags.log"
 CONFIG_DIR = "T:pydiags"
@@ -113,6 +124,8 @@ def check_env(args) -> dict:
         python  = sys.version.split()[0],
         prefix  = sys.prefix,
         exec_prefix = sys.exec_prefix,
+        have_amiga    = HAVE_AMIGA,
+        have_netfix   = HAVE_NETFIX,
         path    = sys.path[:],
         env     = {k: os.environ[k] for k in sorted(os.environ)
                    if k in ("PYTHONHOME", "PYTHONPATH", "PATH",
