@@ -1,0 +1,402 @@
+# CodeRabbit configuration for python-amigaos4
+# See: https://docs.coderabbit.ai/guides/configuration-overview
+#
+# This repo cross-compiles CPython 3.12 for **PowerPC AmigaOS 4.1**
+# via the walkero/amigagccondocker toolchain (newlib + -mcpu=440 +
+# GetInterface-style OS4 API dispatch).  The C code that ships
+# alongside the interpreter is a *Python C extension* (_amigamodule.c),
+# not classic 68k AmigaOS code -- the review rules below reflect that.
+
+language: en-US
+early_access: false
+
+tone_instructions: >-
+  Two very different halves.  C is an OS4 PPC Python C extension
+  (newlib crt, __USE_INLINE__, IExec/IIntuition/IGraphics interfaces).
+  Python has two flavours: the CPython source under Python-3.12.7/ is
+  vendored + patched (patches live at repo root as *.patch), and the
+  amiga_bindings/ + examples/ code targets our reduced OS4-Python
+  stdlib.  Don't apply modern-desktop-CPython assumptions to
+  amiga_bindings/ or examples/ -- flag anything that assumes ssl,
+  threading, subprocess.Popen, or a working hashlib.sha512 (missing
+  from the build).
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  collapse_walkthrough: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_reviewers: false
+  auto_apply_labels: false
+  suggested_labels: true
+
+  labeling_instructions:
+    - label: breaking-change
+      instructions: >-
+        Apply when a PR changes a public surface in a way that breaks
+        existing users: a removed / renamed / re-typed `_amiga` entry
+        point (the Python-visible native API), a removed / renamed
+        stdlib patch that the port depends on, a removed / renamed
+        amiga.* Python module, a removed / renamed setup.local static
+        builtin, or a changed build command line that existing scripts
+        invoke.
+    - label: architectural
+      instructions: >-
+        Apply when a PR changes cross-cutting behavior: the set of
+        static-linked stdlib modules, the CPython patch strategy, the
+        OS4-side event loop (wait_message/timer.device), the
+        amiga.ui widget model, or the PYTHONHOME/PYTHONPATH deploy
+        layout on the Amiga.
+    - label: amiga-c
+      instructions: Apply when the PR touches C code (_amigamodule.c, amiga_shim.*).
+    - label: cpython-patch
+      instructions: Apply when the PR adds / edits a *.patch against Python-3.12.7/.
+    - label: os4-python
+      instructions: >-
+        Apply when the PR touches Python code that runs on the OS4
+        target (amiga_bindings/**, examples/**, tests/**).
+    - label: build
+      instructions: >-
+        Apply when build.sh, Dockerfile, setup.local, or the walkero
+        image pin changes.
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  path_filters:
+    # Vendored CPython source tree — huge and unmodified. Our diff
+    # against it lives in the *.patch files at repo root; review those
+    # instead of the extracted tree.
+    - "!Python-3.12.7/**"
+    # Build products.
+    - "!build-ppc-amigaos/**"
+    - "!**/*.o"
+    - "!**/*.a"
+    - "!**/*.so"
+    - "!**/*.exe"
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+    - "!**/*.egg-info/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    # Vendored binaries that ship with the OS4 install.
+    - "!newlib.library"
+    - "!python312.zip"
+    - "!Python-3.12.7.tar.xz"
+    # Screenshots + binary docs assets.
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.hdf"
+    - "!**/*.adf"
+    - "!**/*.iff"
+    - "!**/*.mod"
+    # IDE noise.
+    - "!.idea/**"
+    - "!.vscode/**"
+
+  path_instructions:
+    # --------------------------------------------------------------
+    # _amigamodule.c — Python C extension baked into python-os4
+    # as a static builtin (see setup.local).  Compiled with the
+    # walkero PPC gcc, -mcrt=newlib, -D__USE_INLINE__.
+    # --------------------------------------------------------------
+    - path: "_amigamodule.c"
+      instructions: |
+        Python C extension for **AmigaOS 4.1 PowerPC**, NOT classic 68k
+        AmigaOS and NOT a modern Unix.  Do NOT suggest POSIX (fork, pipe,
+        select, epoll, pthread) or Linux security-hardening patterns.
+        Do NOT suggest replacing AmigaOS APIs (IExec, IIntuition,
+        IGraphics, IDOS, IRexxSys) with portable equivalents.
+
+        Concrete OS4 rules to enforce:
+        - Uses classic-style call names via -D__USE_INLINE__ (e.g.
+          `OpenLibrary`, `GetInterface`, `AllocVec`, `FreeVec`,
+          `CreateRexxMsg`) that macro-dispatch to `IExec->...`.  Flag
+          direct `IExec->foo()` calls unless the classic macro would
+          not resolve.
+        - Do NOT redeclare `struct ExecBase *SysBase`, `struct
+          IntuitionBase *IntuitionBase`, `struct DosLibrary *DOSBase`
+          etc — the proto/*.h headers already declare them with
+          OS4-specific types.  We DO define our own `IntuitionBase`,
+          `GfxBase`, `RexxSysBase` as `struct Library *` in this file
+          because -lauto isn't pulling in the auto-openers with our
+          link line -- that pattern is deliberate.
+        - **Memory allocation**: use `AllocVec(size, MEMF_ANY | MEMF_CLEAR)`
+          + `FreeVec()`.  Flag `AllocMem`/`FreeMem` (raw exec allocator
+          is fine but unusual here), `malloc`/`free` (newlib works but
+          Amiga-owned buffers should use AllocVec so TypeOfMem() sees
+          them), or missing MEMF_CLEAR when the caller assumes zeroed
+          memory.
+        - **Interface open/close pairing**: every `GetInterface()` +
+          matching `DropInterface()`, every `OpenLibrary` + matching
+          `CloseLibrary`, every `CreateMsgPort` + `DeleteMsgPort`,
+          every `CreateRexxMsg` + `DeleteRexxMsg`, every
+          `CreateArgstring` + `DeleteArgstring`.  Flag any unbalanced
+          error path.
+        - **Forbid()/Permit() balance**: `Forbid()` freezes the entire
+          system until matched with `Permit()`.  Every error path
+          (including `PyErr_*` returns and early NULL checks) MUST
+          `Permit()` first.
+        - **Python C API**: check reference counting on borrowed vs
+          owned refs (PyList_GET_ITEM returns borrowed, PyList_GetItem
+          returns owned...).  Missing DECREFs on error paths are
+          real bugs.  Every `PyArg_ParseTuple` failure should return
+          NULL without leaking allocated Amiga objects.
+        - **printf/sprintf**: amiga.lib `sprintf` returns `char *` on
+          classic; on OS4 newlib's snprintf is what we get -- but the
+          format-specifier rule still bites: use `%ld` + `(long)` cast
+          for anything that might be a 32-bit int, since APTR / ULONG
+          / int all round-trip differently.
+        - **Do NOT use `Delay(1)`** as a fine-grained sleep -- triggers
+          a DSI (data storage interrupt) on OS4 with our -lauto /
+          newlib setup.  Use `WaitTOF()` for VBlank or a timer.device
+          IORequest for anything under 1s.
+        - **No direct chip register access** (custom.color[], DMACONR,
+          $DFF000, etc.) -- sam460ex has no chip RAM.  Use CGX /
+          graphics.library primitives.
+        - **No inline `__asm("dN")` register captures** -- 68k-only.
+        - Ignore cppcheck / clang complaints about unknown types
+          (APTR, ULONG, UWORD, STRPTR, BPTR, TAG, struct Task, struct
+          MsgPort, struct Window, struct StringInfo, struct RexxMsg,
+          etc.) -- the walkero cross-compiler resolves these.
+
+    - path: "amiga_shim.{c,h}"
+      instructions: |
+        POSIX-ish shims for CPython to link against on OS4 (things
+        newlib either doesn't provide or provides with the wrong
+        signature).  Any change here can affect every module in the
+        interpreter build, not just our _amiga extension.  Flag:
+        - New shim functions that don't have a matching declaration
+          in amiga_shim.h (would be silently ignored because the
+          header is force-included via build.sh's CFLAGS).
+        - Shim implementations that call themselves recursively
+          (e.g. if you name a shim `open` and it calls `open`, the
+          override happens because -include amiga_shim.h precedes the
+          system header).
+
+    # --------------------------------------------------------------
+    # CPython patches -- vendored source lives at Python-3.12.7/ and
+    # is excluded from review; our modifications live at repo root as
+    # *.patch files. Adding or changing a patch is high-signal.
+    # --------------------------------------------------------------
+    - path: "*.patch"
+      instructions: |
+        Diff against the vendored **Python 3.12.7** source tree.
+        Adding / changing / removing a patch is high signal --
+        call out:
+        - Which upstream Python file it modifies + why it's needed
+          on OS4 (usually: newlib gap, missing POSIX, path/volume
+          separator, or an assertion CPython makes that isn't true
+          on Amiga).
+        - Whether the change is upstream-mergeable (portable fix) or
+          OS4-specific (`#ifdef __PPC__ / AMIGA` guarded).  Prefer
+          guarded changes so the vendored tree could be re-based on
+          a newer Python without losing the fix.
+        - Any patch that removes an existing check without a
+          replacement is a red flag on a memory-unprotected OS.
+        - The Modules-_sqlite-module.c.patch pattern (bump version
+          guard for SDK's sqlite3.h) is the reference for how
+          version-guarded changes should look.
+
+    # --------------------------------------------------------------
+    # setup.local -- Modules/Setup.local for CPython.  Adding a
+    # builtin bakes it into the interpreter binary; removing one
+    # can silently break an example.
+    # --------------------------------------------------------------
+    - path: "setup.local"
+      instructions: |
+        Controls which stdlib modules are baked in as **static
+        builtins** (there is no dlopen on OS4 with our setup, so
+        every extension has to be static-linked or unavailable).
+        Flag:
+        - New builtins that pull in extra library dependencies not
+          currently in the walkero SDK's SDK/lib/.
+        - Removed builtins -- an example may `import` it.
+        - Modules moved between "enabled" and "disabled" without a
+          note explaining why (e.g. `_sha512` disabled means
+          `http.server` won't import; call that trade-off out).
+        - The `#*module` disable list is order-sensitive; flag
+          duplicates or contradictions.
+
+    # --------------------------------------------------------------
+    # Cross-compile build system.
+    # --------------------------------------------------------------
+    - path: "build.sh"
+      instructions: |
+        Runs inside the walkero AmigaOS4 Docker image
+        (`amiga-python-build:local`).  Flag any change that:
+        - Drops `-mcrt=newlib`, `-mcpu=440`, `-D__USE_INLINE__`, or
+          `-D__USE_OLD_TIMEVAL__` from CFLAGS -- these are load-bearing.
+        - Removes `-Wl,--whole-archive libamiga_shim.a` -- our POSIX
+          shim gets skipped by the standard archive scan without it.
+        - Changes CPython configure flags (--disable-shared,
+          --without-ensurepip, ac_cv_func_* overrides) -- these were
+          tuned to make cross-configure work without a working target
+          Python for feature probes.
+        - Assumes host tools (bash-only features are fine since we run
+          inside the Docker image, but if any part moves out of the
+          container it must be portable).
+        - The `tail -80` on `make -j1 2>&1` truncates errors -- if the
+          truncation is loosened, that's an improvement; if a step
+          starts capturing less, flag it.
+
+    - path: "Dockerfile"
+      instructions: |
+        Pinned base image is what makes the build reproducible.  Flag
+        unpinned tags on `FROM walkero/amigagccondocker:*` and any
+        change that would drop the OS4 SDK headers we rely on
+        (rexx/, proto/rexxsyslib.h, etc.).
+
+    - path: "extract-newlib.sh"
+      instructions: |
+        Pulls the runtime `newlib.library` out of the walkero SDK
+        image so it can be deployed to the Amiga.  Flag any change
+        that hard-codes a Docker image tag inconsistent with the one
+        in Dockerfile.
+
+    - path: "package-stdlib.sh"
+      instructions: |
+        Bundles the stdlib into `python312.zip` for deployment to
+        DH1:lib.  Any file included / excluded here changes what
+        `import` finds on the Amiga side -- flag drops of stdlib
+        packages that examples import.
+
+    # --------------------------------------------------------------
+    # Python code that runs ON THE AMIGA TARGET.
+    # --------------------------------------------------------------
+    - path: "amiga_bindings/amiga/**/*.py"
+      instructions: |
+        Python modules that run on the OS4-side Python 3.12.7.  The
+        available stdlib is REDUCED (see setup.local for the actual
+        builtin list).  Do NOT flag missing type hints or f-string
+        modernizations -- clarity + working-on-a-machine-with-no-mmu
+        matters more than modern style here.  DO flag:
+        - `import ssl` (no ssl builtin in the current build).
+        - `from http.server import ...` (pulls hashlib.sha512, missing).
+        - `subprocess.Popen`  (no fork/exec on OS4; `os.system` works).
+        - `signal.SIGKILL` / signal.pause / other POSIX-signal patterns.
+        - Any assumption that a native `_amiga` entry point exists
+          without a `hasattr(_amiga, ...)` guard -- the extension
+          rebuilds independently of the pure-Python code.
+        - `amiga.ui` is a widget framework built on `_amiga.open_window` +
+          IDCMP event loop.  Widgets MUST be side-effect-free during
+          construction (they may be built while there's no active
+          Window handle) and MUST only render inside their `draw(handle)`.
+
+    - path: "examples/**/*.py"
+      instructions: |
+        Demo apps that run on the OS4 target.  Same reduced-stdlib
+        rules as amiga_bindings/.  Every example script MUST work
+        after:
+          setenv PYTHONHOME DH1:
+          setenv PYTHONPATH DH1:lib
+          DH1:python-os4 DH1:pytests/examples/<name>.py
+        Anything that assumes a specific cwd, expects env vars other
+        than PYTHONHOME/PYTHONPATH, or hard-codes a mac-style path is
+        a bug on the target.  Test data / DBs default to RAM: for
+        speed and non-persistence -- flag anything that writes to
+        SYS: or DH0: without documenting why.
+        `sys.path.insert(0, "DH1:pytests/amiga_bindings")` at the top
+        of a script is required if the example imports `amiga.ui`
+        etc.; a stale `chris:pytests/amiga` namespace package shadows
+        our real bindings otherwise.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Test code that runs on the OS4 target.  Style rules relaxed;
+        prefer clarity.  Do NOT flag missing docstrings, magic
+        numbers, or long test functions.  DO flag tests that would
+        need modules absent from the OS4 build.
+
+    # --------------------------------------------------------------
+    # Deploy + launcher scripts.
+    # --------------------------------------------------------------
+    - path: "scripts/**"
+      instructions: |
+        Two distinct categories under here:
+        - scripts/*.sh: host shell scripts (build / deploy from mac +
+          linux).  Must run on both zsh (mac) and bash (linux); flag
+          GNU-only sed / grep / date flags.
+        - scripts/launchers/*: AmigaDOS shell scripts (deployed to
+          DH1:scripts/ on the target).  These use `setenv`, `execute`,
+          `>NIL:` etc.  Do NOT flag missing `#!` shebangs or POSIX
+          idioms here -- AmigaDOS shell isn't sh-compatible.  DO flag
+          any launcher that forgets `setenv PYTHONHOME DH1:` or
+          `setenv PYTHONPATH DH1:lib` -- Python will silently init-fail
+          without them.
+
+    # --------------------------------------------------------------
+    # Docs.
+    # --------------------------------------------------------------
+    - path: "README.md"
+      instructions: |
+        Top-level intro + quick-start.  Flag any code / config change
+        that would break the documented "how to build" or "how to
+        deploy" steps.
+
+    - path: "docs/**/*.md"
+      instructions: |
+        Contributor + demo docs.  `docs/DEMOS.md` is the
+        screenshot-driven gallery -- new example demos should get an
+        entry with a screenshot link + a one-paragraph blurb.
+
+    - path: "CLAUDE.md"
+      instructions: |
+        Project instructions for Claude Code sessions.  If the
+        codebase changed (new module, new build stage, new deploy
+        path), CLAUDE.md should reflect it.
+
+  tools:
+    ruff:
+      enabled: true
+    cppcheck:
+      enabled: true      # noisy on Amiga types — filtered by tone_instructions
+    gitleaks:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    # Not applicable.
+    eslint:
+      enabled: false
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    golangci-lint:
+      enabled: false
+    rubocop:
+      enabled: false
+    phpstan:
+      enabled: false
+    swiftlint:
+      enabled: false
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    scope: local
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto
