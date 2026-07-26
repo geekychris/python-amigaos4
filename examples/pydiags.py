@@ -440,48 +440,79 @@ def run_headless(cmd: str, args: list, as_json: bool = False) -> int:
 
 def run_tui() -> int:
     entries = sorted(REGISTRY.items())
+    ARG_HINTS = {
+        "socket":  "host port [timeout]   e.g.: 8.8.8.8 53",
+        "dns":     "hostname              e.g.: example.com",
+        "getaddrinfo": "host [port]        e.g.: example.com 80",
+        "http":    "url [timeout]         e.g.: http://example.com/",
+        "arexx":   "PORT command...       e.g.: WORKBENCH SAY 'hi'",
+        "setenv":  "KEY VALUE             e.g.: FOO bar",
+        "assign":  "NAME PATH             e.g.: MYWORK DH1:work",
+        "fs":      "[path]                e.g.: SYS: or blank for DH1:",
+        "log":     "[N]                   e.g.: 20 (tail last 20 entries)",
+    }
+    print("pydiags — interactive TUI.  Enter a number, a check name,")
+    print("or `q` to quit.  Every invocation also lands in T:pydiags.log.")
     while True:
         print()
-        print("=" * 60)
-        print(f"pydiags interactive — {time.strftime('%H:%M:%S')}")
-        print("=" * 60)
+        print("=" * 62)
+        print(f" pydiags — {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 62)
         for i, (name, (desc, _)) in enumerate(entries, 1):
-            print(f"  {i:>2d}. {name:<10s} {desc}")
+            print(f"  {i:>2d}. {name:<12s} {desc}")
         print("   q. quit")
         try:
             choice = input("> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            print("\n(stdin closed — exiting.  Try running with a subcommand"
+                  " arg for headless mode.)")
             return 0
         if choice in ("q", "quit", "exit"):
+            print("bye.")
             return 0
         if not choice:
             continue
         try:
             n = int(choice)
             if not (1 <= n <= len(entries)):
-                print("out of range")
+                print(f"out of range (1..{len(entries)})")
                 continue
             name = entries[n - 1][0]
         except ValueError:
             if choice in REGISTRY:
                 name = choice
             else:
-                print("unknown")
+                print(f"unknown check: {choice!r}  (try a number or a name from the list)")
                 continue
         # collect extra args interactively for checks that need them
         extra = []
-        if name in ("socket", "dns", "http", "arexx", "setenv",
-                     "assign", "fs", "log"):
-            raw = input(f"args for {name}: ").strip()
+        if name in ARG_HINTS:
+            hint = ARG_HINTS[name]
+            try:
+                raw = input(f"args for {name} ({hint})\n  > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n(no args — running with empty args, will probably show usage)")
+                raw = ""
             if raw:
                 extra = raw.split()
         _, fn = REGISTRY[name]
-        result = fn(extra)
+        try:
+            result = fn(extra)
+        except Exception as e:
+            import traceback
+            result = {"ok": False, "error": f"CRASH: {type(e).__name__}: {e}",
+                      "traceback": traceback.format_exc()}
         _log_line("tui", name, extra, result)
         print()
-        print(f"--- {name}: {'OK' if result.get('ok') else 'FAIL'} ---")
+        print("─" * 62)
+        print(f" {name}({' '.join(extra)}): {'OK' if result.get('ok') else 'FAIL'}")
+        print("─" * 62)
         print(_pretty(result))
+        print()
+        try:
+            input("[Enter to continue, or q+Enter to quit]  ")
+        except (EOFError, KeyboardInterrupt):
+            return 0
 
 
 def main() -> int:
