@@ -1,211 +1,282 @@
 # python-amigaos4
 
-**CPython 3.12.7 port for AmigaOS 4.1 PowerPC** — cross-compiled from
-Linux/macOS via Docker (walkero/amigagccondocker), targeted at
-sam460ex on QEMU (also runs on real hardware once you get the newlib
-libraries right).
+**CPython 3.12.7 for AmigaOS 4.1 PowerPC.**
 
-Status: **all six roadmap phases done + real Intuition windows +
-turtle-graphics compat layer running unmodified freegames snake**.
+Cross-compiled from Linux/macOS via Docker (walkero/amigagccondocker),
+targeted at the QEMU sam460ex machine and real hardware. Runs modern
+Python — including third-party pure-Python wheels — on top of newlib
++ bsdsocket + Intuition. Ships with a native `_amiga` extension for
+direct calls into Exec / DOS / Intuition / Graphics and a small
+`amiga.*` package family that wraps the classic OS4 paradigms in
+idiomatic Python.
 
-```
-DH1:> python-os4 --version
-Python 3.12.7
+## Why
 
-DH1:> python-os4 pytests/examples/snake.py     # ← real Intuition window
-```
+There's no maintained CPython for AmigaOS 4 in the wild. The port
+exists so people can write scripts, run existing pure-Python
+libraries, prototype Amiga apps in a high-level language, and reach
+Intuition / DOS / Exec without having to write C. It's a real
+interpreter, not a subset — `pip install`, `import sqlite3`, `import
+threading`, `import ssl` all work.
 
-## What works
+## Capabilities
 
-| capability                       | how                                                       |
-| -------------------------------- | --------------------------------------------------------- |
-| Pure Python 3.12.7               | 298/298 language + stdlib checks pass on real OS4         |
-| Sockets (TCP client + listen)    | `_socket` static builtin over bsdsocket.library           |
-| Threads (Lock/RLock/Sem/Event/TPE)| `_thread` + threading + concurrent.futures                |
-| zlib decompression               | `zlib` static builtin                                     |
-| pip 24.2 (import + install pure-Py wheels) | bundled + `amiga.pip` shim (subprocess-free)              |
-| **SQLite 3.34.0**                | `_sqlite3` static builtin over SDK's libsqlite3.a         |
-| **Real Intuition windows**       | `_amiga.open_window` / `draw_text` / `wait_message`       |
-| **Turtle graphics compat**       | `amiga.turtle` on top of `_amiga` — runs `freegames.snake`|
-| Native exec/dos introspection    | `_amiga.list_tasks` / `list_libraries` / `avail_mem_summary` |
+| capability | how |
+| ---------- | --- |
+| Pure Python 3.12.7 (all language + most stdlib) | 298 checks pass on OS4 |
+| TCP sockets (client + listen) | `_socket` static builtin over bsdsocket.library |
+| Threads (Lock/RLock/Sem/Event/ThreadPoolExecutor) | `_thread` + threading + concurrent.futures |
+| SQLite 3.34.0 | `_sqlite3` static builtin over the SDK's libsqlite3.a |
+| zlib decompression | `zlib` static builtin |
+| pip 24.2 (bundled) — install pure-Python wheels | `amiga.pip.install_wheel()` |
+| `import ssl` / `import hashlib` (optional) | statically linked against AmiSSL, opens `amissl.library` **lazily** on first import |
+| HTTPS GET end-to-end | `amiga.https.get(url)` shell-out through `openssl s_client` (works around a fd-interop bug between `_ssl` and `_socket`) |
+| Real Intuition windows | `_amiga.open_window` / `draw_text` / `wait_message` |
+| Turtle graphics compat | `amiga.turtle` on top of `_amiga` — runs unmodified freegames snake/paint |
+| Exec / DOS / MsgPort introspection | `_amiga.list_tasks` / `list_libraries` / `list_ports` / `avail_mem_summary` |
+| ARexx send + reply | `_amiga.rexx_send` / `amiga.arexx` |
 
-Not yet: SSL (blocked on AmiSSL header wiring), real fork/exec
-(architectural — use `amiga.os.run()` shim), interactive `python -m
-pip install` (subprocess boundary — use `amiga.pip.install_wheel`).
-
-## Repository layout
-
-```
-python-amigaos4/
-├── build.sh                  # top-level cross-compile driver (docker)
-├── scripts/
-│   ├── build.sh              # thin wrapper + --strip pass
-│   └── deploy.sh             # generates the MCP commands to push everything
-├── setup.local               # Modules/Setup overrides — pins C extensions static
-├── Modules-*.patch           # small CPython patches for OS4 quirks
-├── Lib-*.patch, Python-*.patch, Objects-*.patch
-├── amiga_shim.c/h            # POSIX gap-fillers (nanosleep, ioctl, fcntl, ...)
-├── _amigamodule.c            # native _amiga extension (22 entry points)
-├── amiga_bindings/
-│   └── amiga/                # Python-side wrappers built on _amiga
-│       ├── dos/              # amiga.dos: Info, Assign, Execute, walk, ...
-│       ├── exec/             # amiga.exec: MsgPort, Signal, Wait, list_tasks
-│       ├── intuition/        # amiga.intuition: Window/IDCMP paradigm + EasyRequest
-│       ├── bridge/           # amiga.bridge: TCP client for the amiga-bridge daemon
-│       ├── os/               # amiga.os.run — subprocess-drop-in for OS4
-│       ├── pip/              # amiga.pip — subprocess-free wheel installer
-│       └── turtle/           # amiga.turtle — freegames-compatible shim
-├── examples/                 # 10 demo apps + snake game (see docs/DEMOS.md)
-├── tests/                    # 15 test files (language/stdlib/io/amiga)
-└── docs/
-    ├── DEMOS.md              # screenshot gallery + Mac↔Amiga snake comparison
-    └── RUNNING.md            # setup, PYTHONHOME/PATH, tracer usage, cleanup
-```
+**AmiSSL is optional**: the interpreter is linked so that
+`amissl.library` opens on first `import ssl` (not at process start).
+Users who don't need SSL don't have to install AmiSSL at all;
+`python -V`, `import json`, `import sqlite3` all work on a stock OS4.
 
 ## Build
 
-Prereq: Docker Desktop.  One-time image build (~500 MB pull):
+Requires Docker Desktop.
 
-```
-docker pull walkero/amigagccondocker:os4-gcc11-arm64   # or amd64
-docker build -t amiga-python-build:local .              # our thin wrapper
-```
+```bash
+# One-time — pulls the walkero cross-compile toolchain (~500 MB)
+# then builds our thin wrapper image.
+docker pull walkero/amigagccondocker:os4-gcc11-arm64   # or -amd64
+docker build -t amiga-python-build:local .
 
-Then:
-
-```
-scripts/build.sh --strip
-```
-
-Produces `build-ppc-amigaos/python-stripped.exe` (≈ 9 MB PowerPC ELF,
-52 built-in C extensions, dynamically links `newlib.library 53.87`).
-
-Full command reference: `scripts/build.sh -h`.
-
-## Deploy to OS4
-
-Assumes AmigaOS 4.1 FE booted (QEMU sam460ex or real hardware) with
-the `amiga-bridge` daemon running.  See
-[amiga_mcp](https://github.com/geekychris/amiga_mcp) for the
-emulator+bridge stack.
-
-```
-scripts/deploy.sh
+# Build. Output: build-ppc-amigaos/python.exe (unstripped, ~56 MB)
+./build.sh make
 ```
 
-Prints the exact `amiga_push_file` / `amiga_transfer` calls to paste
-into a Claude Code session (or any MCP client wired to the
-amiga-devbench server).  Options:
+Strip for deployment:
 
-* `--binary-only` — just push `python-os4`
-* `--code-only`   — bindings + examples + tests, skip binary
-* `--stdlib`      — also stage the pure-Python stdlib flat files
-                    (one-time per new OS4 image)
+```bash
+docker run --rm -v "$(pwd):/work" amiga-python-build:local \
+  ppc-amigaos-strip -sR.comment /work/build-ppc-amigaos/python.exe \
+                                -o /work/build-ppc-amigaos/python-stripped
+# → ~15 MB, all 52 built-in C extensions included
+```
 
-## Running
+## Install on OS4
 
-**CRITICAL first-time-per-boot setup** — Python's built-in getpath
-doesn't autodiscover `DH1:lib` on our OS4 build, and the init failure
-is silent:
+Prerequisites on the target:
+
+```
+DH1:python-os4         # the interpreter (rename python-stripped to this)
+DH1:lib/               # the Python stdlib — see Deploy below
+```
+
+Optional (only if you want HTTPS):
+
+```
+LIBS:amisslmaster.library    # AmiSSL runtime, from
+LIBS:AmiSSL/amissl_v3xx.library    # https://github.com/jens-maus/amissl
+DH1:AmiSSL/Certs/                  # CA cert bundle from same
+DH1:openssl                        # OpenSSL CLI from same
+```
+
+The `scripts/install_amissl_on_os4.py` installer automates all four
+(downloads latest release, uploads via devbench, deploys). See
+[docs/INSTALL.md](docs/INSTALL.md).
+
+Set the Python search path **once per boot** (or add to
+`S:User-Startup` — the installer does this for AmiSSL):
 
 ```
 setenv PYTHONHOME DH1:
 setenv PYTHONPATH DH1:lib
 ```
 
-Then:
+Without those, Python can't find `encodings` and dies silently
+during `init_fs_encoding`. See [docs/RUNNING.md](docs/RUNNING.md)
+for the full recipe, tracer logs for debugging startup failures,
+and how to persist the env vars across reboots.
+
+### Deploying via amiga_mcp
+
+The [amiga_mcp](https://github.com/geekychris/amiga_mcp) repo
+provides a QEMU wrapper, an `amiga-bridge` daemon, and an MCP server
+that speaks a small protocol for file transfer + command execution
+against a running OS4 target. `scripts/deploy.sh` prints the exact
+transfer commands to paste into a Claude Code / MCP session:
+
+```bash
+./scripts/deploy.sh                # everything (binary + bindings + examples + tests)
+./scripts/deploy.sh --binary-only  # just the python-os4 executable
+./scripts/deploy.sh --code-only    # bindings + examples + tests, skip binary
+./scripts/deploy.sh --stdlib       # also stage lib/ (one-time per new OS4 image)
+```
+
+## Running
+
+Sanity check:
+
+```
+DH1:python-os4 -V
+Python 3.12.7
+```
+
+Run a script:
 
 ```
 DH1:python-os4 RAM:tiny.py
-DH1:python-os4 DH1:pytests/examples/clock.py           # windowed
-DH1:python-os4 DH1:pytests/examples/snake.py           # turtle game
+DH1:python-os4 DH1:pytests/examples/hello_dos.py
 ```
 
-Full details, tracer usage for future silent-init bugs, and RAM:
-tempfile housekeeping: **[docs/RUNNING.md](docs/RUNNING.md)**.
+Run a windowed app:
 
-## Demos + screenshots
+```
+DH1:python-os4 DH1:pytests/examples/clock.py       # wall clock in an Intuition window
+DH1:python-os4 DH1:pytests/examples/planner.py     # calendar + SQLite notes
+DH1:python-os4 DH1:pytests/examples/snake.py       # freegames snake via amiga.turtle
+```
 
-**[docs/DEMOS.md](docs/DEMOS.md)** — every windowed app, live
-screenshots from a QEMU session, and a side-by-side comparison of
-`freegames.snake` on macOS (stdlib turtle) vs. AmigaOS 4 (via our
-`amiga.turtle` shim).
+The interactive menu picker exposes every example without needing
+to remember paths:
 
-Highlights (all real Intuition windows):
+```
+execute DH1:scripts/menu
+```
 
-| app              | what it does                                        |
-| ---------------- | --------------------------------------------------- |
-| `planner.py`     | **full calendar + notes app** with SQLite storage, tag search, event fields (title/date/time/attendees/notes/url/tags) |
-| `clock.py`       | wallclock + uptime, redrawn every second            |
-| `window_sysmon.py` | live memory/tasks/libraries dashboard             |
-| `hello_ipc.py`   | Amiga MsgPort microservice — worker + 2 clients     |
-| `port_service.py`| full RPC over MsgPort (ping/time/upper/shutdown)    |
-| `snake.py`       | grantjenks/free-python-games snake, ported          |
-| `snake_verifiable.py` | + audit log to `T:snake_log.txt` for testing   |
-| `gui_form.py`    | multi-step Intuition RequestChoice popups           |
-| `sysmon.py`      | ANSI TUI system monitor                             |
-| `task_watcher.py`| spawn/exit event log via `_amiga.list_tasks` diff   |
+(Scripts in `DH1:scripts/` are AmigaDOS launcher files that set
+PYTHONHOME/PYTHONPATH then run the matching `.py`. See
+`scripts/launchers/` in this repo for the sources.)
 
-## The port's shape
+## Examples
 
-### `_amiga` — native C module (static builtin)
+`examples/` — end-to-end demos of what the port can do.
 
-Direct calls into IExec / IDOS / IIntuition / IGraphics.  22 entry
-points across:
+| example | what it demonstrates |
+| ------- | -------------------- |
+| `hello_dos.py` | filesystem walk via `amiga.dos` |
+| `hello_ipc.py` | MsgPort microservice (worker + 2 clients) |
+| `hello_gui.py` | IDCMP event-loop shape (sim mode) |
+| `gui_form.py` | real Intuition `RequestChoice` / `RequestString` dialogs |
+| `sysmon.py` | live ANSI TUI: memory / tasks / libs / ports |
+| `window_sysmon.py` | same, but in an Intuition window |
+| `clock.py` | wallclock + uptime, redrawn every second |
+| `port_service.py` | RPC over MsgPort (ping / time / upper / shutdown) |
+| `task_watcher.py` | live spawn/exit tracker via ExecBase walks |
+| `planner.py` | full calendar + notes app with SQLite storage |
+| `snake.py` | grantjenks/free-python-games snake, unmodified |
+| `snake_verifiable.py` | + audit log for automated verification |
+| `arexx_demo.py` | send ARexx commands to running apps |
+| `rexx_console.py` | interactive ARexx REPL |
+| `browser.py` | text-mode web browser — HTTP via urllib, HTTPS via `amiga.https` |
+| `web_notes.py` | tiny web server (raw sockets) with notes CRUD |
+| `taskkill.py` | list + kill tasks by name/pattern |
+| `fileman.py` | dual-pane file manager |
+| `pydiags.py` | subcommand-driven diagnostic tool (env / dns / http / ssl / ...) |
+| `menu.py` | interactive picker for everything above |
 
-* **exec**: `find_task`, `avail_mem`, `avail_mem_summary`,
-  `list_tasks`, `list_libraries`, `list_ports`
-* **dos**: `current_dir_name`, `volume_info`
-* **intuition**: `open_window`, `close_window`, `window_geom`,
-  `clear_window`, `draw_text`, `get_message`, `wait_message`,
-  `active_window`
-* **graphics**: `draw_line`, `fill_rect`, `dot`, `obtain_pen`,
-  `release_pen`
+**Detailed docs + screenshots:** [docs/DEMOS.md](docs/DEMOS.md).
 
-Plus 12 IDCMP\_\*, 7 WFLG\_\*, 6 MEMF\_\* constants exposed.
+## Tests
 
-Interface pointers (`IIntuition`, `IGraphics`) opened via
-`OpenLibrary` + `GetInterface` at module import (`-lauto` position
-in the link line puts the auto-openers too early to be pulled in).
+`tests/` — a small custom runner that produces one-line
+`PASS:` / `FAIL:` / `SKIP:` results per file.
 
-### `amiga.*` — Python-level wrappers
+Categories:
+- `language/` — arithmetic, strings, control flow, classes, iterators, exceptions
+- `stdlib/` — math, json, re, collections, itertools, functools, datetime
+- `io/` — file I/O against `RAM:`
+- `amiga/` — probes `amiga_bindings/` (bridge, dos, exec, intuition)
 
-Pure Python, sit on top of `_amiga` (native) or `os` (POSIX) or
-shell-out via `os.system`.  Model classic Amiga paradigms:
+Run one:
 
-* `amiga.exec.MsgPort / PutMsg / WaitPort / GetMsg / ReplyMsg /
-  FindPort / AllocSignal / Wait / Signal` — the message-passing
-  idiom, backed by `queue.Queue` + `threading.Event` today, wires
-  to real IExec calls in Phase C.
-* `amiga.intuition.OpenWindow / draw_text / wait_message / events`
-  — full IDCMP-drain event loop.  In sim mode logs to console;
-  with `_amiga` available it opens real Intuition windows on
-  Workbench.
-* `amiga.turtle` — subset of stdlib `turtle` sufficient to run
-  grantjenks/free-python-games (snake, paint, pong, tron, ...).
-  Colour names → `ObtainBestPen`, coordinate translation
-  turtle-origin-centre → Intuition-top-left.
+```
+DH1:python-os4 DH1:pytests/language/test_control_flow.py
+```
 
-### Build tuning
+Run all (from `amiga_mcp` with a live bridge):
 
-* `setup.local` promotes ~19 C extensions from `*shared*` to
-  `*static*` because our loader has no dlopen equivalent.  Currently:
-  math, cmath, _datetime, _json, _random, _pickle, _heapq, _bisect,
-  _struct, _csv, _contextvars, _queue, _statistics, _opcode,
-  _zoneinfo, array, select, binascii, unicodedata, _socket, zlib,
-  _amiga.
-* `amiga_shim.c/h` fills newlib gaps: `nanosleep` (via `Delay`),
-  `getrandom` (weak LCG), `ioctl` (no-op), `fcntl` (no-op),
-  `unsetenv`, `initgroups`, `setrlimit`/`getrlimit`, gthread stubs,
-  `INET_ADDRSTRLEN`.  Force-included via `-include amiga_shim.h`.
+```
+for t in DH1:pytests/language/#? DH1:pytests/stdlib/#? DH1:pytests/io/#?
+  DH1:python-os4 $t
+```
+
+Full explanation of the runner + how to add tests:
+[tests/README.md](tests/README.md).
+
+### Health-check tool
+
+`pydiags` is a self-contained probe of the runtime — useful both
+for users diagnosing setup and for CI regression checks:
+
+```
+DH1:python-os4 DH1:pytests/examples/pydiags.py env      # what Python thinks it sees
+DH1:python-os4 DH1:pytests/examples/pydiags.py socket 8.8.8.8 53
+DH1:python-os4 DH1:pytests/examples/pydiags.py dns example.com
+DH1:python-os4 DH1:pytests/examples/pydiags.py http http://example.com/
+DH1:python-os4 DH1:pytests/examples/pydiags.py ssl      # 6-step SSL/HTTPS probe
+DH1:python-os4 DH1:pytests/examples/pydiags.py tasks    # Amiga tasks + libs
+```
+
+Interactive TUI mode (menu-driven) when run without args.
+
+## Layout
+
+```
+python-amigaos4/
+├── build.sh                    # top-level cross-compile driver (docker)
+├── setup.local                 # Modules/Setup overrides — pins C extensions static
+├── Modules-*.patch             # small CPython patches for OS4 quirks
+├── amiga_shim.c/h              # POSIX gap-fillers (nanosleep, ioctl, ...)
+├── amissl_lazy.c               # lazy amissl-library opener (replaces libamisslauto)
+├── _amigamodule.c              # native _amiga extension (~25 entry points)
+├── amiga_bindings/amiga/       # Python-side wrappers on top of _amiga
+│   ├── dos/       exec/        intuition/    graphics/
+│   ├── bridge/    os/          pip/          turtle/
+│   ├── https/     netfix/      arexx/        ui/
+├── examples/                   # demo apps (see table above)
+├── tests/                      # language / stdlib / io / amiga
+├── scripts/                    # build.sh, deploy.sh, install_amissl_on_os4.py, launchers/
+└── docs/                       # INSTALL / RUNNING / DEMOS
+```
+
+## Future work
+
+Not yet solved:
+
+- **Full HTTPS via `_ssl`** — Python's `_socket` module opens
+  bsdsocket handles that AmiSSL's SSL layer can't reach across; the
+  handshake returns `EBADF`. Workaround for now is `amiga.https`
+  shell-out to the openssl CLI. Real fix is either patching `_ssl.c`
+  to route through AmiSSL's own socket base, or bridging via
+  `ObtainSocket`.
+- **`fork` / `exec`** — architecturally at odds with AmigaOS process
+  model. Users needing subprocess-style workflows should use
+  `amiga.os.run()` (shell-out via `System()`) or `amiga.exec.MsgPort`
+  for local IPC.
+- **Interactive `python -m pip install`** — subprocess boundary
+  crosses into the `fork` gap above. Programmatic path via
+  `amiga.pip.install_wheel(path)` works today.
+- **Native `ctypes` / `_decimal` / `pyexpat`** — currently
+  `*disabled*`. Blocked on either the walkero SDK layout
+  (no libffi headers in scope) or on newlib API gaps.
+- **Rebuild with `--prefix=/DH1`** so `PYTHONHOME`/`PYTHONPATH` no
+  longer have to be set by hand at every boot.
+- **`_ssl` bsdsocket integration** — the underlying task #94 fix that
+  would let `urllib.request` do HTTPS natively without the shell-out.
 
 ## Related
 
-* [amiga_mcp](https://github.com/geekychris/amiga_mcp) — the
-  cross-development environment: QEMU wrapper, `amiga-bridge`
-  daemon, `amiga-devbench` MCP server that Claude Code drives to
-  push files, run commands, capture screenshots, inject keys.
+- [amiga_mcp](https://github.com/geekychris/amiga_mcp) — the
+  cross-development environment used by everything in this repo:
+  QEMU sam460ex wrapper, `amiga-bridge` daemon (runs on OS4, speaks
+  a small protocol over TCP), `amiga-devbench` MCP server (host-side,
+  drives file transfer / command execution / screenshots / key
+  injection from Claude Code or any MCP client). Also hosts the
+  `tools/https_get/` reference C tool and the AmiSSL installer.
 
 ## License
 
-MIT (see `LICENSE`).  CPython source under Python's own PSF license.
+MIT (see `LICENSE`). CPython source is under Python's PSF license.
+AmiSSL runtime is Apache-2.0 (Hyperion / AmiSSL Open Source Team).
