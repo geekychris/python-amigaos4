@@ -66,13 +66,13 @@ fi
 if [ "$code" -eq 1 ]; then
     echo "--- amiga_bindings package tree ---"
     cat <<EOF
-amiga_dos_command("makedir DH1:pytests/amiga_bindings/amiga/{bridge,dos,exec,intuition,os,pip,turtle}")
+amiga_dos_command("makedir DH1:pytests/amiga_bindings/amiga/{arexx,bridge,dos,exec,graphics,https,intuition,netfix,os,pip,reaction,s3,turtle,ui}")
 
 amiga_transfer(
   source="$REPO/amiga_bindings/amiga/*.py",
   dest="DH1:pytests/amiga_bindings/amiga/")
 EOF
-    for sub in bridge dos exec intuition os pip turtle; do
+    for sub in arexx bridge dos exec graphics https intuition netfix os pip reaction s3 turtle ui; do
         cat <<EOF
 amiga_transfer(
   source="$REPO/amiga_bindings/amiga/$sub/*.py",

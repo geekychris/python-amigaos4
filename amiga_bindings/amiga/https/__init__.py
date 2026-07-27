@@ -119,6 +119,16 @@ def fetch(url: str, method: str = "GET", body: bytes | None = None,
             k, v = line.split(":", 1)
             resp_headers[k.strip().lower()] = v.strip()
 
+    # Prefer Content-Length to bound the body — openssl s_client can
+    # spew a "Connecting to ...", cert-chain "depth=N ..." lines to
+    # the same stdout AFTER the response completes even with -quiet.
+    # Without CL truncation these leak into the body.
+    cl_raw = resp_headers.get("content-length")
+    if cl_raw and cl_raw.isdigit():
+        cl = int(cl_raw)
+        if cl <= len(body_bytes):
+            body_bytes = body_bytes[:cl]
+
     return status, resp_headers, body_bytes
 
 
