@@ -146,7 +146,47 @@ def _rewrite_url_with_ip(url):
     return urlunsplit((p.scheme, new_net, p.path, p.query, p.fragment)), p.hostname
 
 
+def _fetch_https(url, timeout=15):
+    """HTTPS fetch via amiga.https (shells out to openssl s_client).
+
+    Python's _ssl module can't complete TLS handshakes over its own
+    _socket-owned fds on OS4 (task #94 fd interop). amiga.https packages
+    the working workaround: write request to T:, pipe through openssl,
+    read response. Requires AmiSSL installed + DH1:openssl deployed.
+    """
+    from amiga import https as ah
+    status, headers, body = ah.get(url, timeout=timeout)
+    ct = headers.get("content-type", "text/plain").split(";")[0].strip()
+    if status != 200:
+        body = (f"HTTP {status}\r\n\r\n".encode() + body)
+    return ct, body
+
+
 def fetch(url, timeout=15):
+    # HTTPS: shell out to openssl s_client via amiga.https — DOESN'T
+    # need urllib. Do this branch BEFORE _lazy_imports() so a user
+    # who only wants HTTPS URLs isn't blocked by urllib's slow-to-
+    # import stdlib chain (currently multi-minute on OS4).
+    if url.lower().startswith("https://"):
+        try:
+            return _fetch_https(url, timeout)
+        except ImportError as e:
+            return "text/plain", (
+                f"HTTPS unavailable: {e}\n\n"
+                f"Install AmiSSL + openssl CLI, then deploy "
+                f"amiga_bindings/amiga/https/ to DH1:lib/amiga/https/ "
+                f"(or DH1:pytests/amiga_bindings/amiga/https/).".encode())
+        except Exception as e:
+            return "text/plain", (
+                f"HTTPS fetch failed: {type(e).__name__}: {e}".encode())
+
+    # HTTP path still needs urllib.
+    if urllib_request is None:
+        if not _lazy_imports():
+            return "text/plain", (
+                f"HTTP unavailable: urllib/html/xml import failed: "
+                f"{_lazy_error}".encode())
+
     def _do(req_url, host_header=None):
         headers = {"User-Agent": "AmigaPython/3.12 (compatible; sam460ex)"}
         if host_header:

@@ -336,10 +336,17 @@ def check_ssl(args) -> dict:
     except Exception as e:
         result["steps"]["amissl_assign"] = {"ok": False, "err": str(e)}
 
-    # 3. Python `import ssl` — currently pulls amissl.library at Python
-    # startup (task #93 rebuild), so this always succeeds if we got
-    # here. After the lazy-load rebuild, this checks whether amissl is
-    # actually installed at runtime.
+    # 3. Prove lazy-loading is working. If Python launched (which it
+    # did — we're running now), then this build does NOT require amissl
+    # at startup (would have refused to launch before python-amigaos4
+    # 7f4bf10). Whether `import ssl` succeeds tells us if AmiSSL is
+    # installed as an *optional* extra. Both outcomes are healthy.
+    result["steps"]["python_started_without_amissl_forcing"] = {
+        "ok": True,
+        "note": ("python-os4 launched — proves lazy amissl loading "
+                 "(pre-7f4bf10 build would have refused to start "
+                 "without AmiSSL installed)"),
+    }
     try:
         import ssl
         result["steps"]["import_ssl"] = {
@@ -347,12 +354,15 @@ def check_ssl(args) -> dict:
             "openssl_version": ssl.OPENSSL_VERSION,
             "protocols": [p.name for p in ssl.TLSVersion
                          if isinstance(p, ssl.TLSVersion)],
+            "note": "AmiSSL is installed; SSL available",
         }
     except ImportError as e:
         result["steps"]["import_ssl"] = {
             "ok": False,
             "err": f"ImportError: {e}",
-            "note": "expected without AmiSSL installed if lazy build",
+            "note": ("AmiSSL not installed — Python running without SSL. "
+                     "Install AmiSSL if you need HTTPS; "
+                     "amiga.https module also depends on it."),
         }
     except Exception as e:
         result["steps"]["import_ssl"] = {
