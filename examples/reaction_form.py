@@ -88,7 +88,11 @@ def try_reaction():
             ("LAYOUT_AddChild", notes),
             ("LAYOUT_AddChild", button_row),
         ])
-        win = _amiga.new_object("window.class", {
+        # Open window.class via OpenClass (name-scanner is unreliable
+        # for this class specifically). Pass the resulting Class* into
+        # new_object.
+        window_cls = _amiga.open_class("window.class", 52)
+        win = _amiga.new_object(window_cls, {
             "WA_Title":         "Python ReAction form",
             "WA_DragBar":       True,
             "WA_CloseGadget":   True,

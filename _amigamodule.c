@@ -739,19 +739,20 @@ py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    /* Draw the labels to the left of each string gadget.  The
-     * RastPort's origin is at the outer-window top-left (same coord
-     * frame as Gadget.TopEdge / LeftEdge), so we DON'T add BorderTop
-     * here — doing so shifted labels one row down from their fields,
-     * making the whole form look scrambled ("30" above the "Age"
-     * label, "you@example.com" opposite "Name", etc). */
+    /* Draw the labels to the left of each string gadget.
+     *
+     * Re-derive the y for each row from the same y_cursor arithmetic
+     * we used when positioning the gadget — reading g->TopEdge back
+     * has been unreliable (OS4 Intuition may adjust it after open).
+     * The gadget y_cursor started at 22, but that's within the title
+     * bar area on some window styles; bump the drawing baseline by
+     * the actual BorderTop we now know from the opened window. */
     struct RastPort *rp = dlg->win->RPort;
     SetAPen(rp, 1);
     for (int i = 0; i < dlg->n_fields; i++) {
-        struct Gadget *g = dlg->fields[i].gadget;
-        if (!g) continue;
+        int ly = 22 + i * (DIALOG_GADGET_H + DIALOG_ROW_SPACING);
         Move(rp, dlg->win->BorderLeft + 8,
-                 g->TopEdge + g->Height - 3);
+                 dlg->win->BorderTop + ly + DIALOG_GADGET_H - 3);
         Text(rp, (STRPTR)dlg->fields[i].label,
                  (LONG)strlen(dlg->fields[i].label));
     }
@@ -1348,23 +1349,91 @@ build_tag_list(PyObject *dict, struct TagItem **out_tags)
     return 0;
 }
 
+/* Open a BOOPSI class library and return the Class* handle.
+ *
+ * Wraps IIntuition->OpenClass. Needed for classes where the
+ * name-based lookup path in NewObjectA is unreliable — most
+ * notably window.class, which class-scanner won't consistently
+ * find on OS4. See docs/REACTION-status.md and the os4coding
+ * trixie post for background.
+ *
+ * The library base isn't returned (or closed) — we let it stay
+ * open for the process lifetime, matching common OS4 patterns
+ * where the class stays cached anyway.
+ *
+ *   cls = _amiga.open_class("window.class", 52)
+ *   win = _amiga.new_object(cls, {...tags...})
+ *   _amiga.do_method(win, _amiga.WM_OPEN, 0)
+ */
+static PyObject *
+py_open_class(PyObject *self, PyObject *args)
+{
+    const char *name;
+    unsigned long version = 44;
+    if (!PyArg_ParseTuple(args, "s|k", &name, &version)) return NULL;
+
+    Class *cls = NULL;
+    /* __USE_INLINE__ makes OpenClass a macro that already expands to
+     * IIntuition->OpenClass(...) — don't add IIntuition-> here. */
+    struct ClassLibrary *base = OpenClass((STRPTR)name, version, &cls);
+    if (!base || !cls) {
+        PyErr_Format(PyExc_RuntimeError,
+                     "OpenClass(%s, v%lu+) failed — check the class "
+                     "library is installed (SYS:Classes/...)",
+                     name, version);
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)cls);
+}
+
+/* Extract a class reference from a Python object:
+ *   - int  → treat as Class* pointer from open_class()
+ *   - str  → pass as class name for NewObjectA's scanner path
+ * Returns 0 on success (sets *out_cls or *out_name accordingly).
+ * On error, sets Python exception and returns -1.
+ */
+static int
+_resolve_class_arg(PyObject *arg, Class **out_cls, const char **out_name)
+{
+    *out_cls = NULL;
+    *out_name = NULL;
+    if (PyLong_Check(arg)) {
+        *out_cls = (Class *)(uintptr_t)PyLong_AsUnsignedLong(arg);
+        if (!*out_cls) {
+            PyErr_SetString(PyExc_ValueError, "class pointer is NULL");
+            return -1;
+        }
+        return 0;
+    }
+    if (PyUnicode_Check(arg)) {
+        *out_name = PyUnicode_AsUTF8(arg);
+        return 0;
+    }
+    PyErr_SetString(PyExc_TypeError,
+                    "class arg: str (name for scanner) or int "
+                    "(Class* from open_class())");
+    return -1;
+}
+
 static PyObject *
 py_new_object(PyObject *self, PyObject *args)
 {
-    const char *classname;
+    PyObject *cls_arg;
     PyObject *tags_dict;
-    if (!PyArg_ParseTuple(args, "sO", &classname, &tags_dict)) return NULL;
+    if (!PyArg_ParseTuple(args, "OO", &cls_arg, &tags_dict)) return NULL;
+
+    Class *cls = NULL;
+    const char *classname = NULL;
+    if (_resolve_class_arg(cls_arg, &cls, &classname) < 0) return NULL;
 
     struct TagItem *tags = NULL;
     if (build_tag_list(tags_dict, &tags) != 0) return NULL;
 
-    /* NewObject(NULL, "class.name", tag1, val1, ...) — variadic form
-     * unavailable through our tag array. Use NewObjectA which takes
-     * an explicit TagItem array. */
-    Object *obj = NewObjectA(NULL, (STRPTR)classname, tags);
+    Object *obj = NewObjectA(cls, (STRPTR)classname, tags);
     FreeVec(tags);
     if (!obj) {
-        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed", classname);
+        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed",
+                     classname ? classname : "<class-ptr>");
         return NULL;
     }
     return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)obj);
@@ -1379,9 +1448,13 @@ py_new_object(PyObject *self, PyObject *args)
 static PyObject *
 py_new_object_multi(PyObject *self, PyObject *args)
 {
-    const char *classname;
+    PyObject *cls_arg;
     PyObject *tags_list;
-    if (!PyArg_ParseTuple(args, "sO", &classname, &tags_list)) return NULL;
+    if (!PyArg_ParseTuple(args, "OO", &cls_arg, &tags_list)) return NULL;
+
+    Class *cls = NULL;
+    const char *classname = NULL;
+    if (_resolve_class_arg(cls_arg, &cls, &classname) < 0) return NULL;
 
     if (!PyList_Check(tags_list) && !PyTuple_Check(tags_list)) {
         PyErr_SetString(PyExc_TypeError,
@@ -1429,10 +1502,11 @@ py_new_object_multi(PyObject *self, PyObject *args)
     }
     tags[n].ti_Tag = TAG_END;
 
-    Object *obj = NewObjectA(NULL, (STRPTR)classname, tags);
+    Object *obj = NewObjectA(cls, (STRPTR)classname, tags);
     FreeVec(tags);
     if (!obj) {
-        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed", classname);
+        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed",
+                     classname ? classname : "<class-ptr>");
         return NULL;
     }
     return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)obj);
@@ -1855,10 +1929,12 @@ static PyMethodDef amiga_methods[] = {
         "menu_pick_decode(code) -> (menu, item, sub) — decode IDCMP_MENUPICK code."},
 
     /* BOOPSI — object-oriented Intuition (buttons, list browsers, layouts) */
+    {"open_class",        py_open_class,        METH_VARARGS,
+        "open_class(name, version=44) -> Class* handle (int). Wraps OpenClass; needed for window.class + a few others where NewObjectA's scanner isn't reliable."},
     {"new_object",        py_new_object,        METH_VARARGS,
-        "new_object(classname, {tag: value, ...}) -> handle. Wraps NewObjectA."},
+        "new_object(class, {tag: value, ...}) -> handle. class = str (name) or int (from open_class). Wraps NewObjectA."},
     {"new_object_multi",  py_new_object_multi,  METH_VARARGS,
-        "new_object_multi(classname, [(tag, value), ...]) -> handle. Like new_object but tags can repeat (needed for LAYOUT_AddChild)."},
+        "new_object_multi(class, [(tag, value), ...]) -> handle. Same as new_object but tags can repeat (LAYOUT_AddChild)."},
     {"dispose_object",    py_dispose_object,    METH_VARARGS,
         "dispose_object(handle) — DisposeObject."},
     {"set_attrs",         py_set_attrs,         METH_VARARGS,
