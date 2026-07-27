@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
 """fileman.py — dual-pane file manager for AmigaOS 4 in Python.
 
-Two ListPanels side by side, each showing the contents of one
-directory.  Bottom bar has buttons: Copy, Move, Delete, MkDir,
-Rename, Refresh, Swap, Quit.  Above each panel: a path label +
-an "Up" button + a "Root" button.
+Both panes can now be *either* a local filesystem directory *or* an
+S3 (MinIO-compatible) prefix. Copy / Move / Delete / MkDir / Rename
+work cross-storage: pick a file in the S3 pane, focus that pane, hit
+Copy, and it's downloaded and written to the other pane's directory.
 
-Click a filename to select it in that pane.  Double-click / press
-Enter with a directory selected to descend into it.  All file ops
-target the currently-focused pane (green highlight) and act on
-the *other* pane's path as the destination for Copy / Move.
+Startup:
+  Left pane defaults to  SYS:
+  Right pane defaults to DH1:
+
+Configure S3 pane via env vars (set once at launch):
+  S3_ENDPOINT    e.g. 10.0.2.2:9000 (local MinIO) or play.min.io
+  S3_ACCESS      access key
+  S3_SECRET      secret key
+  S3_INSECURE    "1" to skip cert verify (needed for self-signed)
+
+Then use the "Set" button on either pane to point it at:
+  DH1:                        — local Amiga volume
+  RAM:                        — RAM disk
+  /Users/chris                — Unix-style local path
+  s3://                       — S3 bucket list
+  s3://mybucket               — top of a bucket
+  s3://mybucket/photos/2026   — a "folder" inside a bucket
 
 Backed by:
-  * stdlib os / shutil for the actual FS ops (works on OS4 via newlib)
-  * amiga.ui for the widget dispatch + composite dialogs
+  * stdlib os / shutil for local FS
+  * amiga.s3 for S3 (SigV4 signed HTTPS via amiga.https)
+  * amiga.ui for the widget dispatch
   * _amiga.open_dialog for confirm / prompt dialogs
-
-Runs anywhere Python 3 runs; the OS4 build is where it really shines.
 """
 import os
 import shutil
@@ -30,26 +42,40 @@ import _amiga
 from amiga.ui import (App, Button, Label, ListPanel, Rect,
                        PEN_FG, PEN_BG, PEN_HI, PEN_ACC)
 
+# S3 support is optional — if the module isn't there, we still work
+# as a plain local file manager.
+try:
+    from amiga import s3 as _s3
+    _HAS_S3 = True
+except ImportError:
+    _s3 = None
+    _HAS_S3 = False
+
 
 # ---------------------------------------------------------------------------
-# Panel model — one dir + its listing + selection state
+# Base pane interface — every storage backend implements these
 # ---------------------------------------------------------------------------
 
-class Pane:
+class BasePane:
+    """A single pane worth of entries + selection state.
+
+    Subclasses implement the storage-specific parts; the file ops in
+    this module just call read_file / write_file / delete_entry etc.
+    against the focused pane and the *other* pane, and copies fall
+    out for free."""
     def __init__(self, path, list_rect, label_rect):
-        self.path = os.path.abspath(path) if path else "/"
-        # On OS4, os.path.abspath('DH1:') -> DH1:, which we prefer.
+        self.path = path
         self.list_rect = list_rect
         self.label_rect = label_rect
-        self.entries = []       # list[(name, is_dir, size, mtime)]
+        self.entries = []               # list of (name, is_dir, size, mtime)
         self.list = ListPanel(rect=list_rect, items=[], row_h=13,
                                on_pick=self._on_pick)
         self.list.selected = -1
         self._on_pick_callback = None
         self.refresh()
 
+    # --- selection helpers, storage-agnostic ---
     def _on_pick(self, app, idx, item):
-        # remember pane for global handlers
         app.state["focused"] = self
         if self._on_pick_callback:
             self._on_pick_callback(app, idx, item)
@@ -64,11 +90,76 @@ class Pane:
         e = self.selected_entry()
         return e[0] if e else None
 
-    def selected_path(self):
-        name = self.selected_name()
-        if not name or name == "..":
-            return None
-        return _join(self.path, name)
+    # --- storage-specific, must be implemented by subclass ---
+    def refresh(self):
+        raise NotImplementedError
+
+    def enter_selected(self):
+        """Descend if the selection is a directory/prefix. Returns
+        True on descent, False if it was a file."""
+        raise NotImplementedError
+
+    def go_parent(self):
+        raise NotImplementedError
+
+    def go_root(self):
+        raise NotImplementedError
+
+    def read_file(self, name) -> bytes:
+        raise NotImplementedError
+
+    def write_file(self, name, data: bytes):
+        raise NotImplementedError
+
+    def delete_entry(self, name):
+        raise NotImplementedError
+
+    def mkdir(self, name):
+        raise NotImplementedError
+
+    def rename(self, old, new):
+        raise NotImplementedError
+
+    def label(self) -> str:
+        """Prefix + path for the status bar."""
+        return self.path
+
+
+# ---------------------------------------------------------------------------
+# LocalPane — filesystem via os / shutil
+# ---------------------------------------------------------------------------
+
+def _join_local(base, name):
+    if not base or base.endswith((":", "/")):
+        return base + name
+    return base + "/" + name
+
+
+def _parent_local(path):
+    if not path or path.endswith(":"):
+        return path
+    if path.endswith("/"):
+        path = path[:-1]
+    if "/" in path:
+        return path.rsplit("/", 1)[0] or "/"
+    if ":" in path:
+        return path.split(":", 1)[0] + ":"
+    return path
+
+
+def _format_row(e):
+    name, is_dir, size, mtime = e
+    kind = "<DIR>" if is_dir else f"{size:>9d}"
+    stamp = time.strftime("%Y-%m-%d", time.localtime(mtime)) if mtime else "          "
+    if len(name) > 20:
+        name = name[:19] + "»"
+    return f"{name:<20s} {kind} {stamp}"
+
+
+class LocalPane(BasePane):
+    def __init__(self, path, list_rect, label_rect):
+        super().__init__(os.path.abspath(path) if path else "/",
+                         list_rect, label_rect)
 
     def refresh(self):
         try:
@@ -78,12 +169,11 @@ class Pane:
             self.list.items = [f"<error: {e.__class__.__name__}: {e}>"]
             return
         self.entries = []
-        # synthesize a ".." entry (except at root)
         if self.path and self.path not in ("/", "SYS:", "DH0:", "DH1:") \
                 and not self.path.endswith(":"):
             self.entries.append(("..", True, 0, 0))
         for n in names:
-            full = _join(self.path, n)
+            full = _join_local(self.path, n)
             try:
                 st = os.stat(full)
                 is_dir = stat.S_ISDIR(st.st_mode)
@@ -102,14 +192,13 @@ class Pane:
         if not is_dir:
             return False
         if name == "..":
-            self.path = _parent_of(self.path)
+            self.path = _parent_local(self.path)
         else:
-            self.path = _join(self.path, name)
+            self.path = _join_local(self.path, name)
         self.refresh()
         return True
 
     def go_root(self):
-        # Pick the volume of the current path (bit before the first ':')
         i = self.path.find(":")
         if i > 0:
             self.path = self.path[:i + 1]
@@ -118,44 +207,217 @@ class Pane:
         self.refresh()
 
     def go_parent(self):
-        self.path = _parent_of(self.path)
+        self.path = _parent_local(self.path)
         self.refresh()
 
+    def read_file(self, name) -> bytes:
+        with open(_join_local(self.path, name), "rb") as f:
+            return f.read()
 
-# ---------------------------------------------------------------------------
-# Path helpers — AmigaDOS paths use `:` as volume separator, `/` for parent.
-# ---------------------------------------------------------------------------
+    def write_file(self, name, data: bytes):
+        with open(_join_local(self.path, name), "wb") as f:
+            f.write(data)
 
-def _join(base, name):
-    if not base or base.endswith((":", "/")):
-        return base + name
-    return base + "/" + name
+    def delete_entry(self, name):
+        target = _join_local(self.path, name)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+        else:
+            os.remove(target)
 
+    def mkdir(self, name):
+        os.mkdir(_join_local(self.path, name))
 
-def _parent_of(path):
-    if not path or path.endswith(":"):
-        return path      # can't go above a volume
-    # Trim trailing slash
-    if path.endswith("/"):
-        path = path[:-1]
-    if "/" in path:
-        return path.rsplit("/", 1)[0] or "/"
-    if ":" in path:
-        return path.split(":", 1)[0] + ":"
-    return path
-
-
-def _format_row(e):
-    name, is_dir, size, mtime = e
-    kind = "<DIR>" if is_dir else f"{size:>9d}"
-    stamp = time.strftime("%Y-%m-%d", time.localtime(mtime)) if mtime else "          "
-    if len(name) > 20:
-        name = name[:19] + "»"     # a lax indicator that would-be non-ASCII got mapped
-    return f"{name:<20s} {kind} {stamp}"
+    def rename(self, old, new):
+        os.rename(_join_local(self.path, old), _join_local(self.path, new))
 
 
 # ---------------------------------------------------------------------------
-# Confirm + prompt dialogs (thin wrappers around _amiga.open_dialog)
+# S3Pane — MinIO / AWS via amiga.s3
+# ---------------------------------------------------------------------------
+
+def _s3_client_from_env():
+    if not _HAS_S3:
+        raise RuntimeError("amiga.s3 not available on this build")
+    ep = os.environ.get("S3_ENDPOINT", _s3.PLAY_ENDPOINT)
+    ak = os.environ.get("S3_ACCESS",   _s3.PLAY_ACCESS)
+    sk = os.environ.get("S3_SECRET",   _s3.PLAY_SECRET)
+    insecure = os.environ.get("S3_INSECURE", "1") == "1"
+    return _s3.S3Client(ep, ak, sk, insecure_tls=insecure)
+
+
+def _split_s3(path):
+    """Split 's3://bucket/prefix/here' into (bucket, prefix). Empty
+    strings for the bucket-list level ('s3://')."""
+    rest = path[5:] if path.startswith("s3://") else path[3:]
+    rest = rest.strip("/")
+    if not rest:
+        return "", ""
+    if "/" not in rest:
+        return rest, ""
+    bucket, _, prefix = rest.partition("/")
+    return bucket, prefix.strip("/")
+
+
+def _mk_s3(bucket, prefix):
+    if not bucket:
+        return "s3://"
+    if not prefix:
+        return f"s3://{bucket}"
+    return f"s3://{bucket}/{prefix}"
+
+
+class S3Pane(BasePane):
+    def __init__(self, path, list_rect, label_rect):
+        if not path.startswith("s3:"):
+            path = "s3://"
+        self._client = None
+        self._err = None
+        super().__init__(path, list_rect, label_rect)
+
+    def _get_client(self):
+        if self._client is None:
+            try:
+                self._client = _s3_client_from_env()
+            except Exception as e:
+                self._err = str(e)
+                raise
+        return self._client
+
+    def refresh(self):
+        bucket, prefix = _split_s3(self.path)
+        try:
+            c = self._get_client()
+            if not bucket:
+                # Bucket-list view: each bucket is a "directory"
+                bs = c.list_buckets()
+                self.entries = [(".." , True, 0, 0)] if False else []
+                self.entries += [(b["name"], True, 0, 0) for b in bs]
+                self.list.items = [
+                    f"{'/' + b['name']:<30s} <BUCKET>" for b in bs
+                ]
+            else:
+                # Object listing scoped to the prefix (path-style).
+                prefix_slash = (prefix + "/") if prefix else ""
+                objs = c.list_objects(bucket, prefix=prefix_slash,
+                                       max_keys=1000)
+                self.entries = [("..", True, 0, 0)]
+                # Collect sub-"folders" from key prefixes we see.
+                seen_folders: set[str] = set()
+                files = []
+                for o in objs:
+                    key = o["key"]
+                    rest = key[len(prefix_slash):]
+                    if "/" in rest:
+                        folder = rest.split("/", 1)[0]
+                        if folder and folder not in seen_folders:
+                            seen_folders.add(folder)
+                            self.entries.append((folder, True, 0, 0))
+                    elif rest:
+                        files.append((rest, False, o["size"], 0))
+                self.entries += sorted(files)
+                self.list.items = [_format_row(e) for e in self.entries]
+            self.list.selected = 0 if self.entries else -1
+            self.list.top = 0
+        except Exception as e:
+            self.entries = []
+            self.list.items = [f"<S3 error: {type(e).__name__}: {e}>"]
+            self.list.selected = -1
+
+    def enter_selected(self):
+        e = self.selected_entry()
+        if not e:
+            return False
+        name, is_dir, _, _ = e
+        if not is_dir:
+            return False
+        bucket, prefix = _split_s3(self.path)
+        if name == "..":
+            if prefix:
+                parent = "/".join(prefix.split("/")[:-1])
+                self.path = _mk_s3(bucket, parent)
+            elif bucket:
+                self.path = _mk_s3("", "")   # back to bucket list
+            else:
+                return False
+        elif not bucket:
+            # picked a bucket at root
+            self.path = _mk_s3(name, "")
+        else:
+            new_prefix = f"{prefix}/{name}" if prefix else name
+            self.path = _mk_s3(bucket, new_prefix)
+        self.refresh()
+        return True
+
+    def go_parent(self):
+        bucket, prefix = _split_s3(self.path)
+        if prefix:
+            self.path = _mk_s3(bucket, "/".join(prefix.split("/")[:-1]))
+        elif bucket:
+            self.path = _mk_s3("", "")
+        self.refresh()
+
+    def go_root(self):
+        self.path = "s3://"
+        self.refresh()
+
+    def _key(self, name):
+        bucket, prefix = _split_s3(self.path)
+        if not bucket:
+            raise RuntimeError("no bucket selected")
+        rel = f"{prefix}/{name}" if prefix else name
+        return bucket, rel
+
+    def read_file(self, name) -> bytes:
+        c = self._get_client()
+        bucket, key = self._key(name)
+        return c.get_object(bucket, key)
+
+    def write_file(self, name, data: bytes):
+        c = self._get_client()
+        bucket, key = self._key(name)
+        c.put_object(bucket, key, data)
+
+    def delete_entry(self, name):
+        c = self._get_client()
+        bucket, key = self._key(name)
+        # NB: if the "entry" is a folder (prefix) this doesn't delete
+        # anything — you'd need a recursive list+delete. Skipped here
+        # to keep the surface small; delete individual objects only.
+        c.delete_object(bucket, key)
+
+    def mkdir(self, name):
+        # S3 has no true dirs. Write a zero-byte placeholder so the
+        # "folder" shows up in listings under a `/`. Deleting the
+        # last object under it makes the folder disappear too — same
+        # semantics as most S3 GUIs.
+        c = self._get_client()
+        bucket, prefix = _split_s3(self.path)
+        if not bucket:
+            raise RuntimeError("mkdir at s3://root creates buckets — not "
+                                "implemented; use `mc mb` on the host")
+        rel = f"{prefix}/{name}/.folder" if prefix else f"{name}/.folder"
+        c.put_object(bucket, rel, b"")
+
+    def rename(self, old, new):
+        # S3 has no atomic rename; copy + delete.
+        data = self.read_file(old)
+        self.write_file(new, data)
+        self.delete_entry(old)
+
+
+# ---------------------------------------------------------------------------
+# Factory — parse a spec into the right pane subclass
+# ---------------------------------------------------------------------------
+
+def make_pane(spec, list_rect, label_rect):
+    if _HAS_S3 and spec.startswith(("s3:", "S3:")):
+        return S3Pane(spec, list_rect, label_rect)
+    return LocalPane(spec, list_rect, label_rect)
+
+
+# ---------------------------------------------------------------------------
+# Confirm + prompt dialogs
 # ---------------------------------------------------------------------------
 
 def prompt(title, label, default="", maxlen=250):
@@ -173,65 +435,60 @@ def prompt(title, label, default="", maxlen=250):
 
 
 def confirm(title, message):
-    """A confirm is just a read-only prompt with pre-filled `y` — poor
-    man's yes/no.  User leaves the buffer as `y` and hits OK, or clears
-    it (or hits Cancel) to say no."""
     r = prompt(title, message + "  (leave 'y' + OK to confirm)", "y", 4)
     return r is not None and r.strip().lower().startswith("y")
 
 
 # ---------------------------------------------------------------------------
-# File operations
+# File operations — pane-polymorphic
 # ---------------------------------------------------------------------------
 
 def op_copy(app):
-    src = app.state["focused"].selected_path()
-    if not src:
+    src = app.state["focused"]
+    dst = _other(app)
+    name = src.selected_name()
+    if not name or name == "..":
         _msg(app, "no source selected"); return
-    dst_pane = _other(app)
-    dst = _join(dst_pane.path, os.path.basename(src))
-    if not confirm("Copy", f"copy {src} -> {dst}"):
+    if not confirm("Copy", f"copy {name} to {dst.label()}?"):
         _msg(app, "cancelled"); return
     try:
-        if os.path.isdir(src):
-            shutil.copytree(src, dst)
-        else:
-            shutil.copy2(src, dst)
-        _msg(app, f"copied to {dst}")
-        dst_pane.refresh()
+        data = src.read_file(name)
+        dst.write_file(name, data)
+        _msg(app, f"copied {name} -> {dst.label()} ({len(data)}b)")
+        dst.refresh()
     except Exception as e:
         _msg(app, f"copy failed: {e}")
 
 
 def op_move(app):
-    src = app.state["focused"].selected_path()
-    if not src:
+    src = app.state["focused"]
+    dst = _other(app)
+    name = src.selected_name()
+    if not name or name == "..":
         _msg(app, "no source"); return
-    dst = _join(_other(app).path, os.path.basename(src))
-    if not confirm("Move", f"move {src} -> {dst}"):
+    if not confirm("Move", f"move {name} to {dst.label()}?"):
         _msg(app, "cancelled"); return
     try:
-        shutil.move(src, dst)
-        _msg(app, f"moved to {dst}")
-        app.state["focused"].refresh()
-        _other(app).refresh()
+        data = src.read_file(name)
+        dst.write_file(name, data)
+        src.delete_entry(name)
+        _msg(app, f"moved {name}")
+        src.refresh(); dst.refresh()
     except Exception as e:
         _msg(app, f"move failed: {e}")
 
 
 def op_delete(app):
-    src = app.state["focused"].selected_path()
-    if not src:
+    src = app.state["focused"]
+    name = src.selected_name()
+    if not name or name == "..":
         _msg(app, "no target"); return
-    if not confirm("Delete", f"delete {src} ?"):
+    if not confirm("Delete", f"delete {name}?"):
         _msg(app, "cancelled"); return
     try:
-        if os.path.isdir(src):
-            shutil.rmtree(src)
-        else:
-            os.remove(src)
-        _msg(app, f"deleted {src}")
-        app.state["focused"].refresh()
+        src.delete_entry(name)
+        _msg(app, f"deleted {name}")
+        src.refresh()
     except Exception as e:
         _msg(app, f"delete failed: {e}")
 
@@ -240,29 +497,26 @@ def op_mkdir(app):
     name = prompt("MkDir", "new-dir-name", "", 60)
     if not name or not name.strip():
         _msg(app, "cancelled"); return
-    full = _join(app.state["focused"].path, name.strip())
     try:
-        os.mkdir(full)
-        _msg(app, f"created {full}")
+        app.state["focused"].mkdir(name.strip())
+        _msg(app, f"created {name}")
         app.state["focused"].refresh()
     except Exception as e:
         _msg(app, f"mkdir failed: {e}")
 
 
 def op_rename(app):
-    src = app.state["focused"].selected_path()
-    if not src:
+    src = app.state["focused"]
+    name = src.selected_name()
+    if not name or name == "..":
         _msg(app, "no target"); return
-    new_name = prompt("Rename",
-                       f"new name for {os.path.basename(src)}",
-                       os.path.basename(src), 100)
-    if not new_name or not new_name.strip():
+    new_name = prompt("Rename", f"new name for {name}", name, 100)
+    if not new_name or not new_name.strip() or new_name == name:
         _msg(app, "cancelled"); return
-    dst = _join(os.path.dirname(src), new_name.strip())
     try:
-        os.rename(src, dst)
+        src.rename(name, new_name.strip())
         _msg(app, f"renamed -> {new_name}")
-        app.state["focused"].refresh()
+        src.refresh()
     except Exception as e:
         _msg(app, f"rename failed: {e}")
 
@@ -276,12 +530,62 @@ def op_refresh(app):
 def op_swap(app):
     l, r = app.state["left"], app.state["right"]
     l.path, r.path = r.path, l.path
-    l.refresh(); r.refresh()
+    # Preserve pane widget positions — swap only paths, then refresh
+    # with the new spec. If the swapped path calls for a different
+    # pane class (local <-> s3), replace the pane object in place.
+    app.state["left"]  = _rebuild(l)
+    app.state["right"] = _rebuild(r)
+    _rewire_widgets(app)
     _msg(app, "swapped")
+
+
+def op_setpath(app):
+    """Change the focused pane's target. Accepts local paths and
+    s3:// URIs; hands off to make_pane() when the storage-class
+    changes."""
+    focused = app.state["focused"]
+    new = prompt("Set path", "path (SYS:  or  s3://bucket/prefix)",
+                 focused.path, 200)
+    if not new or not new.strip():
+        _msg(app, "cancelled"); return
+    new = new.strip()
+    try:
+        replacement = make_pane(new, focused.list_rect, focused.label_rect)
+        # Swap it into the app state.
+        for side in ("left", "right"):
+            if app.state[side] is focused:
+                app.state[side] = replacement
+                if app.state["focused"] is focused:
+                    app.state["focused"] = replacement
+                break
+        _rewire_widgets(app)
+        _msg(app, f"pane now at {replacement.label()}")
+    except Exception as e:
+        _msg(app, f"set-path failed: {e}")
 
 
 def op_quit(app):
     app.stop()
+
+
+def _rebuild(old):
+    """After a swap, if the storage class needs to change, build a
+    fresh pane of the right class for the new path. If it matches
+    already, just refresh() the existing object."""
+    if old.path.startswith(("s3:", "S3:")):
+        if isinstance(old, S3Pane):
+            old.refresh(); return old
+        return S3Pane(old.path, old.list_rect, old.label_rect)
+    if isinstance(old, LocalPane):
+        old.refresh(); return old
+    return LocalPane(old.path, old.list_rect, old.label_rect)
+
+
+def _rewire_widgets(app):
+    """Rebuild app.widgets from current panes + buttons. Called
+    whenever a pane object is replaced."""
+    app.widgets = [app.state["left"].list, app.state["right"].list,
+                    *app.state["buttons"]]
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +607,9 @@ def draw_header(app):
 
     def _draw_pane_header(pane, x, y):
         marker = "*" if pane is focus else " "
-        text = f"{marker} {pane.path}"
-        if len(text) > 42:
-            text = text[:42]
+        text = f"{marker} {pane.label()}"
+        if len(text) > 50:
+            text = text[:50]
         app.text(x, y, text, PEN_ACC if pane is focus else PEN_FG)
 
     _draw_pane_header(l,   8, 20)
@@ -318,49 +622,48 @@ def draw_status(app):
 
 
 def main():
-    app = App(title="Python File Manager",
+    left_spec  = os.environ.get("FILEMAN_LEFT",  "SYS:")
+    right_spec = os.environ.get("FILEMAN_RIGHT", "DH1:")
+
+    app = App(title="Python File Manager (local + S3)",
               w=820, h=440, left=40, top=30)
 
-    left  = Pane("SYS:",
-                  list_rect=Rect(8,   30, 400, 340),
-                  label_rect=Rect(8,   16, 400,  30))
-    right = Pane("DH1:",
-                  list_rect=Rect(408, 30, 800, 340),
-                  label_rect=Rect(408, 16, 800,  30))
+    left  = make_pane(left_spec,
+                       list_rect=Rect(8,   30, 400, 340),
+                       label_rect=Rect(8,   16, 400,  30))
+    right = make_pane(right_spec,
+                       list_rect=Rect(408, 30, 800, 340),
+                       label_rect=Rect(408, 16, 800,  30))
 
-    def on_pick_left(app, idx, item):
-        app.state["focused"] = left
-        # double-click behaviour approximated: if the same row was
-        # already selected and it's a directory, descend into it.
-        # (No real double-click event in IDCMP without more work.)
-    def on_pick_right(app, idx, item):
-        app.state["focused"] = right
-
-    left._on_pick_callback  = on_pick_left
-    right._on_pick_callback = on_pick_right
+    left._on_pick_callback  = lambda a, i, it: a.state.update(focused=left)
+    right._on_pick_callback = lambda a, i, it: a.state.update(focused=right)
 
     app.state["left"]    = left
     app.state["right"]   = right
     app.state["focused"] = left
-    app.state["msg"]     = "focus a pane by clicking, then use a button below"
+    app.state["msg"]     = ("focus a pane by clicking, then use a button below. "
+                            "Set S3_ENDPOINT/S3_ACCESS/S3_SECRET env vars before "
+                            "running to point at your own S3.")
 
     # Bottom bar
-    W = 78
+    W = 70
     y0, y1 = 350, 380
     def _btn(x, label, fn):
         return Button(Rect(x, y0, x + W, y1), label, on_click=fn)
     buttons = [
         _btn(  8, "Enter",   lambda a: a.state["focused"].enter_selected() or True),
-        _btn( 92, "Up",      lambda a: a.state["focused"].go_parent()),
-        _btn(176, "Root",    lambda a: a.state["focused"].go_root()),
-        _btn(260, "Copy",    op_copy),
-        _btn(344, "Move",    op_move),
-        _btn(428, "Delete",  op_delete),
-        _btn(512, "Rename",  op_rename),
-        _btn(596, "MkDir",   op_mkdir),
-        _btn(680, "Refresh", op_refresh),
-        _btn(736, "Quit",    op_quit),
+        _btn( 84, "Up",      lambda a: a.state["focused"].go_parent()),
+        _btn(160, "Root",    lambda a: a.state["focused"].go_root()),
+        _btn(236, "Set",     op_setpath),
+        _btn(312, "Copy",    op_copy),
+        _btn(388, "Move",    op_move),
+        _btn(464, "Delete",  op_delete),
+        _btn(540, "Rename",  op_rename),
+        _btn(616, "MkDir",   op_mkdir),
+        _btn(692, "Refresh", op_refresh),
+        _btn(742, "Quit",    op_quit),
     ]
+    app.state["buttons"] = buttons
 
     app.widgets = [left.list, right.list, *buttons]
 
@@ -373,7 +676,6 @@ def main():
     def on_key(a, ch, code):
         if ch == "q":
             op_quit(a); return True
-        # Tab-like: swap focus with 's'
         if ch == "s":
             a.state["focused"] = _other(a); return True
         if ch == "r":
