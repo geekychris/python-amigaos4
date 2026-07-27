@@ -27,19 +27,34 @@ Tested against `button.gadget`, `string.gadget`, `integer.gadget`,
 
 ### 1. `WM_OPEN` on `window.class` returns 0
 
-Even with the WM_OPEN NULL arg fix (from the OS4 wiki), the window
-never actually opens.
+Even with the WM_OPEN NULL arg fix + `OpenClass("window.class", 52,
+&cls)` producing a valid `Class *` handle that we now pass into
+`NewObject`, the window still does not open. WM_OPEN returns 0.
 
-Root cause (per [os4coding.net trixie blog][1]): OS4 wants
-`OpenClass("window.class", 52, &WindowClass)` first, then
-`NewObject(WindowClass, NULL, tags)`. Class-scanner lookup by string
-name (`NewObject(NULL, "window.class", tags)`) is unreliable and
-should be avoided.
+**Shipped and confirmed working:**
+- `_amiga.open_class(name, version)` returns non-zero handle.
+- `new_object(handle, tags)` accepts the handle.
+- The Python wrapper mirrors the C incantation from
+  [os4coding.net trixie blog][1] step-for-step.
 
-Fix path: add `_amiga.open_class(name, version)` that returns a
-`Class *` handle, then extend `new_object` / `new_object_multi` to
-accept a class-pointer int as the first arg instead of a string.
-That's ~30 lines of C + one rebuild.
+**What's still wrong (theories, not confirmed):**
+- Missing `WINDOW_ParentGroup` prerequisite. We do pass a
+  `layout.gadget` root, but window.class may want children attached
+  after open, not before.
+- Missing `WA_PubScreen`/`WA_PubScreenName` on OS4 default —
+  window.class silently fails to attach to the default pub screen.
+- Interface pointer mismatch. Something is picking up the wrong
+  `IIntuition` (e.g. `Class *` was OpenClass'd through one interface
+  but `IDoMethod` dispatches through another). This would need to be
+  ruled out with a small C reproducer built by the same toolchain.
+
+Next real progress needs (a) a working ReAction-from-C reference we
+can diff against byte for byte, or (b) QEMU's GDB stub attached with
+symbols so we can step into `window.class`'s WM_OPEN handler and
+watch it reject the object.
+
+Not going to keep guessing from Python. Landed the primitives so the
+fix, when it comes, is a two-line Python change.
 
 ### 2. `open_dialog` labels misalign with 4+ fields
 
@@ -68,12 +83,16 @@ Either way, `open_dialog` currently works OK with 1-2 fields
 [2]: https://wiki.amigaos.net/wiki/ReAction
 [3]: https://wiki.amigaos.net/wiki/Programming_AmigaOS_4:_GUI_Toolkit_ReAction
 
-## Next steps (both need a `_amigamodule.c` rebuild)
+## Next steps
 
-1. **Add `open_class(name, version)` + accept class pointer in
-   `new_object` / `new_object_multi`.** Once that's in, retry
-   `reaction_form.py`'s ReAction path with the class-pointer form.
-2. **Fix `open_dialog` label draw** on-target — probably by not
+1. **Build a minimal reaction-window-from-C reproducer** with the
+   same toolchain (`walkero/amigagccondocker:os4-gcc11`). If the C
+   version opens a window, diff the setup against what `_amiga` does.
+   If the C version *also* fails, the answer is toolchain/runtime.
+2. **Attach QEMU's GDB stub** (`scripts/start-qemu-os4.sh --gdb`)
+   and put a breakpoint in window.class's WM_OPEN handler. Watch
+   what it rejects.
+3. **Fix `open_dialog` label draw** on-target — probably by not
    caring about `g->TopEdge` and instead re-using the `y_cursor`
    variable that was used to position the gadget in the first place,
    combined with the window's `BorderTop` at draw time (post-open).
