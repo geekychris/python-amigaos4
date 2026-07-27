@@ -226,12 +226,12 @@ class S3Client:
         )
         headers["authorization"] = authorization
 
-        # amiga.https will inject its own Host and Content-Length —
-        # remove our lowercase 'host' from the return set to avoid
-        # dupes (it's already used for signing).
-        out = dict(headers)
-        del out["host"]
-        return out
+        # Return all headers *including* host — amiga.https does a
+        # case-insensitive merge and will honour our signed Host
+        # (including port for non-443 endpoints). Dropping it here
+        # let amiga.https substitute a port-less Host, which broke
+        # SigV4 whenever the endpoint used a non-default port.
+        return dict(headers)
 
     def _request(self, method: str, path: str, query: dict[str, str] | None,
                  body: bytes, content_type: str | None = None

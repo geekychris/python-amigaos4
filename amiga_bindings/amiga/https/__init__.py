@@ -48,12 +48,19 @@ def fetch(url: str, method: str = "GET", body: bytes | None = None,
     path = (u.path or "/") + (("?" + u.query) if u.query else "")
 
     hdrs = {
-        "Host": host,
+        "Host": host if port in (443, 80) else f"{host}:{port}",
         "User-Agent": "amiga.https/1.0",
         "Accept": "*/*",
         "Connection": "close",
     }
     if headers:
+        # Case-insensitive merge — caller-supplied headers should
+        # override defaults regardless of case. Critical for SigV4:
+        # the signer produces lowercase names ('host', 'authorization')
+        # and would otherwise appear alongside our default 'Host',
+        # producing two header lines and a signature mismatch.
+        lower_keys = {k.lower() for k in headers}
+        hdrs = {k: v for k, v in hdrs.items() if k.lower() not in lower_keys}
         hdrs.update(headers)
     if body is not None:
         hdrs["Content-Length"] = str(len(body))
