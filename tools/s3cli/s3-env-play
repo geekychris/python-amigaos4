@@ -1,0 +1,9 @@
+; s3-env-play — set S3 env vars for the public MinIO play sandbox.
+; Run with:  execute DH1:s3cli/s3-env-play
+
+setenv S3_ENDPOINT play.min.io
+setenv S3_ACCESS   Q3AM3UQ867SPQQA43P2F
+setenv S3_SECRET   zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG
+setenv S3_INSECURE 1
+
+echo "s3-env-play: pointed at https://play.min.io (public sandbox)"

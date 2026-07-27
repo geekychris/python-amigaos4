@@ -1,0 +1,11 @@
+; s3-env-local — set S3 env vars for local MinIO reachable at the
+; QEMU host gateway. Run with:  execute DH1:s3cli/s3-env-local
+;
+; After running, `s3 ls`, `s3 put`, etc all pick these up.
+
+setenv S3_ENDPOINT 10.0.2.2:9000
+setenv S3_ACCESS   minioadmin
+setenv S3_SECRET   minioadmin
+setenv S3_INSECURE 1
+
+echo "s3-env-local: pointed at https://10.0.2.2:9000 (minioadmin)"
