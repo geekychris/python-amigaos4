@@ -1,4 +1,10 @@
+.key ARGS/F
+;
 ; Launcher for pydiags — sets PYTHONHOME/PATH then runs it.
+;
+; AmigaDOS script arg syntax: .key ARGS/F takes the whole remainder of
+; the command line as a single string named ARGS, then <ARGS> below
+; expands to it. This matches how the OS4 shell parses `execute foo a b`.
 ;
 ; Headless (one-shot subcommand, printed then exit) works via execute:
 ;
@@ -7,9 +13,9 @@
 ;   execute DH1:scripts/pydiags http http://example.com/
 ;
 ; INTERACTIVE MODE (menu TUI) — do NOT launch through `execute`.
-; AmigaDOS execute closes stdin as soon as it's done reading the
-; script itself, so pydiags' input() returns EOF immediately and
-; the TUI drops back to shell.  Launch directly instead:
+; AmigaDOS execute closes stdin as soon as it is done reading the
+; script itself, so pydiags input() returns EOF immediately and the
+; TUI drops back to shell.  Launch directly instead:
 ;
 ;   setenv PYTHONHOME DH1:
 ;   setenv PYTHONPATH DH1:lib
@@ -17,4 +23,4 @@
 ;
 setenv PYTHONHOME DH1:
 setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/pydiags.py $*
+DH1:python-os4 DH1:pytests/examples/pydiags.py <ARGS>
