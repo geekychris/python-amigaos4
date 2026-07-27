@@ -971,6 +971,452 @@ py_release_pen(PyObject *self, PyObject *args)
 
 
 /* --------------------------------------------------------------------- */
+/* Intuition menu bar — SetMenuStrip / ClearMenuStrip + NewMenu[]        */
+/*                                                                        */
+/* Python spec: [(menu_title, [(item_title, shortcut_letter_or_None),    */
+/*                             None,   # separator                        */
+/*                             ...]),                                     */
+/*               ...]                                                     */
+/*                                                                        */
+/* Menu picks arrive as IDCMP_MENUPICK with code = MENU/ITEM/SUB codes.  */
+/* Use _amiga.menu_pick_decode(code) to unpack.                          */
+/* --------------------------------------------------------------------- */
+
+#include <libraries/gadtools.h>
+#include <proto/gadtools.h>
+
+/* gadtools.library base + interface — opened lazily on first menu
+ * call. Non-static because proto/gadtools.h declares these as extern. */
+struct Library     *GadToolsBase = NULL;
+struct GadToolsIFace *IGadTools  = NULL;
+
+/* Newlib on OS4 gates strdup behind _XOPEN_SOURCE; the existing
+ * dup_str (line ~527) uses AllocVec so we can FreeVec on the way out.
+ * Reused here for menu labels + BOOPSI tag strings.  Note the free
+ * path in menustrip_free() below uses FreeVec accordingly. */
+
+/* Keep the built NewMenu[] + backing strings + processed menu tree
+ * alive for the lifetime of the strip, one allocation per window.
+ * Freed by py_clear_menu_strip or by close_window (users should call
+ * clear before close). */
+typedef struct MenuStrip {
+    struct NewMenu *nm;         /* array, terminated by NM_END entry */
+    struct Menu    *tree;       /* CreateMenus result */
+    char          **strings;    /* strdup'd titles, freed on clear */
+    int             nstrings;
+    struct Window  *win;
+} MenuStrip;
+
+static void
+menustrip_free(MenuStrip *ms)
+{
+    if (!ms) return;
+    if (ms->win && ms->tree) ClearMenuStrip(ms->win);
+    if (ms->tree && IGadTools) FreeMenus(ms->tree);
+    if (ms->nm) FreeVec(ms->nm);
+    if (ms->strings) {
+        for (int i = 0; i < ms->nstrings; i++) FreeVec(ms->strings[i]);
+        FreeVec(ms->strings);
+    }
+    FreeVec(ms);
+}
+
+static PyObject *
+py_set_menu_strip(PyObject *self, PyObject *args)
+{
+    unsigned long handle;
+    PyObject *spec;                /* list of (title, items_list) */
+    if (!PyArg_ParseTuple(args, "kO", &handle, &spec)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)handle;
+    if (!w) {
+        PyErr_SetString(PyExc_ValueError, "invalid window handle");
+        return NULL;
+    }
+    if (!GadToolsBase) {
+        GadToolsBase = OpenLibrary("gadtools.library", 50);
+        if (GadToolsBase) {
+            IGadTools = (struct GadToolsIFace *)
+                GetInterface(GadToolsBase, "main", 1, NULL);
+        }
+    }
+    if (!IGadTools) {
+        PyErr_SetString(PyExc_RuntimeError, "gadtools.library not available");
+        return NULL;
+    }
+    if (!PyList_Check(spec) && !PyTuple_Check(spec)) {
+        PyErr_SetString(PyExc_TypeError, "spec must be a list of (title, items)");
+        return NULL;
+    }
+    Py_ssize_t nmenus = PySequence_Length(spec);
+
+    /* First pass: count total NewMenu entries needed (each menu title
+     * + each item/subitem/separator + one NM_END terminator). */
+    int total = 1;   /* NM_END */
+    for (Py_ssize_t i = 0; i < nmenus; i++) {
+        PyObject *menu = PySequence_GetItem(spec, i);
+        if (!menu || !PyTuple_Check(menu) || PyTuple_Size(menu) != 2) {
+            Py_XDECREF(menu);
+            PyErr_SetString(PyExc_TypeError, "menu entry must be (title, items)");
+            return NULL;
+        }
+        PyObject *items = PyTuple_GetItem(menu, 1);
+        total += 1 + (int)PySequence_Length(items);
+        Py_DECREF(menu);
+    }
+
+    MenuStrip *ms = AllocVec(sizeof(MenuStrip), MEMF_ANY | MEMF_CLEAR);
+    if (!ms) return PyErr_NoMemory();
+    ms->nm = AllocVec(sizeof(struct NewMenu) * total, MEMF_ANY | MEMF_CLEAR);
+    ms->strings = AllocVec(sizeof(char *) * total, MEMF_ANY | MEMF_CLEAR);
+    ms->nstrings = 0;
+    ms->win = w;
+    if (!ms->nm || !ms->strings) {
+        menustrip_free(ms);
+        return PyErr_NoMemory();
+    }
+
+    int idx = 0;
+    for (Py_ssize_t i = 0; i < nmenus; i++) {
+        PyObject *menu = PySequence_GetItem(spec, i);   /* new ref */
+        const char *mtitle;
+        PyObject *items;
+        if (!PyArg_ParseTuple(menu, "sO", &mtitle, &items)) {
+            Py_DECREF(menu);
+            menustrip_free(ms);
+            return NULL;
+        }
+        char *mt = dup_str(mtitle);
+        ms->strings[ms->nstrings++] = mt;
+        ms->nm[idx].nm_Type = NM_TITLE;
+        ms->nm[idx].nm_Label = mt;
+        idx++;
+
+        Py_ssize_t nitems = PySequence_Length(items);
+        for (Py_ssize_t j = 0; j < nitems; j++) {
+            PyObject *item = PySequence_GetItem(items, j);   /* new ref */
+            if (item == Py_None) {
+                ms->nm[idx].nm_Type = NM_ITEM;
+                ms->nm[idx].nm_Label = NM_BARLABEL;
+                idx++;
+                Py_DECREF(item);
+                continue;
+            }
+            const char *itext;
+            const char *shortcut = NULL;
+            if (PyTuple_Check(item) && PyTuple_Size(item) >= 1) {
+                itext = PyUnicode_AsUTF8(PyTuple_GetItem(item, 0));
+                if (PyTuple_Size(item) >= 2) {
+                    PyObject *sh = PyTuple_GetItem(item, 1);
+                    if (sh != Py_None) shortcut = PyUnicode_AsUTF8(sh);
+                }
+            } else if (PyUnicode_Check(item)) {
+                itext = PyUnicode_AsUTF8(item);
+            } else {
+                Py_DECREF(item);
+                menustrip_free(ms);
+                PyErr_SetString(PyExc_TypeError,
+                                "menu item must be str or (title, shortcut)");
+                return NULL;
+            }
+            char *it = dup_str(itext);
+            ms->strings[ms->nstrings++] = it;
+            ms->nm[idx].nm_Type = NM_ITEM;
+            ms->nm[idx].nm_Label = it;
+            if (shortcut) {
+                char *sc = dup_str(shortcut);
+                ms->strings[ms->nstrings++] = sc;
+                ms->nm[idx].nm_CommKey = sc;
+            }
+            idx++;
+            Py_DECREF(item);
+        }
+        Py_DECREF(menu);
+    }
+    ms->nm[idx].nm_Type = NM_END;
+
+    ms->tree = CreateMenus(ms->nm, TAG_END);
+    if (!ms->tree) {
+        menustrip_free(ms);
+        PyErr_SetString(PyExc_RuntimeError, "CreateMenus failed");
+        return NULL;
+    }
+    /* Layout the menus for the window's visual font. */
+    LayoutMenus(ms->tree, NULL, TAG_END);
+    if (!SetMenuStrip(w, ms->tree)) {
+        menustrip_free(ms);
+        PyErr_SetString(PyExc_RuntimeError, "SetMenuStrip failed");
+        return NULL;
+    }
+    /* Caller owns the handle; call clear_menu_strip(mshandle) to free. */
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)ms);
+}
+
+static PyObject *
+py_clear_menu_strip(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    if (!PyArg_ParseTuple(args, "k", &h)) return NULL;
+    MenuStrip *ms = (MenuStrip *)(uintptr_t)h;
+    menustrip_free(ms);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+py_menu_pick_decode(PyObject *self, PyObject *args)
+{
+    unsigned long code;
+    if (!PyArg_ParseTuple(args, "k", &code)) return NULL;
+    /* Amiga menu-code layout: 5 bits menu, 6 bits item, 5 bits sub. */
+    unsigned int menu = code & 0x1F;
+    unsigned int item = (code >> 5) & 0x3F;
+    unsigned int sub  = (code >> 11) & 0x1F;
+    return Py_BuildValue("(III)", menu, item, sub);
+}
+
+
+/* --------------------------------------------------------------------- */
+/* BOOPSI — Basic Object-Oriented Programming System for Intuition       */
+/*                                                                        */
+/* Wraps NewObject / DisposeObject / SetGadgetAttrs / SetAttrs /         */
+/* GetAttr / IDoMethod so Python code can build ReAction UIs             */
+/* (button.gadget, string.gadget, listbrowser.gadget, layout.gadget).    */
+/*                                                                        */
+/* Tag values in kwargs can be:                                          */
+/*    int   → passed as-is                                               */
+/*    bool  → 0 / 1                                                      */
+/*    str   → strdup'd + passed as STRPTR (leaked; typical usage is      */
+/*            for labels that outlive the object)                        */
+/*    None  → skipped                                                    */
+/*                                                                        */
+/* Tag KEYS can be int (raw tag) or str (looked up in TAG_TABLE).        */
+/* --------------------------------------------------------------------- */
+
+#include <intuition/classes.h>
+#include <intuition/classusr.h>
+#include <intuition/gadgetclass.h>
+#include <intuition/imageclass.h>
+#include <intuition/icclass.h>
+#include <classes/window.h>
+#include <classes/requester.h>
+#include <images/label.h>
+#include <images/bitmap.h>
+#include <gadgets/button.h>
+#include <gadgets/chooser.h>
+#include <gadgets/integer.h>
+#include <gadgets/layout.h>
+#include <gadgets/listbrowser.h>
+#include <gadgets/string.h>
+#include <gadgets/checkbox.h>
+
+/* Tag name → int lookup. Small hand-picked set of the tags a Python
+ * caller is most likely to want. Add more as the demos grow. */
+typedef struct { const char *name; unsigned long value; } TagEntry;
+static const TagEntry TAG_TABLE[] = {
+    /* Generic gadget tags */
+    {"GA_ID",           GA_ID},
+    {"GA_Text",         GA_Text},
+    {"GA_Left",         GA_Left},
+    {"GA_Top",          GA_Top},
+    {"GA_Width",        GA_Width},
+    {"GA_Height",       GA_Height},
+    {"GA_Disabled",     GA_Disabled},
+    {"GA_ReadOnly",     GA_ReadOnly},
+    {"GA_RelVerify",    GA_RelVerify},
+    {"GA_Selected",     GA_Selected},
+    {"GA_Immediate",    GA_Immediate},
+    /* window.class */
+    {"WA_Title",        WA_Title},
+    {"WA_Left",         WA_Left},
+    {"WA_Top",          WA_Top},
+    {"WA_Width",        WA_Width},
+    {"WA_Height",       WA_Height},
+    {"WA_Flags",        WA_Flags},
+    {"WA_IDCMP",        WA_IDCMP},
+    {"WA_CloseGadget",  WA_CloseGadget},
+    {"WA_DepthGadget",  WA_DepthGadget},
+    {"WA_DragBar",      WA_DragBar},
+    {"WA_SizeGadget",   WA_SizeGadget},
+    {"WA_Activate",     WA_Activate},
+    {"WINDOW_Position", WINDOW_Position},
+    {"WINDOW_Layout",   WINDOW_Layout},
+    {"WINDOW_ParentGroup", WINDOW_ParentGroup},
+    /* layout.gadget */
+    {"LAYOUT_Orientation",  LAYOUT_Orientation},
+    {"LAYOUT_AddChild",     LAYOUT_AddChild},
+    {"LAYOUT_SpaceOuter",   LAYOUT_SpaceOuter},
+    {"LAYOUT_SpaceInner",   LAYOUT_SpaceInner},
+    {"LAYOUT_HorizAlignment", LAYOUT_HorizAlignment},
+    {"LAYOUT_VertAlignment",  LAYOUT_VertAlignment},
+    {"LAYOUT_BevelStyle",   LAYOUT_BevelStyle},
+    {"LAYOUT_Label",        LAYOUT_Label},
+    {"LAYOUT_WeightBar",    LAYOUT_WeightBar},
+    /* button.gadget */
+    {"BUTTON_AutoButton",   BUTTON_AutoButton},
+    /* string.gadget */
+    {"STRINGA_TextVal",     STRINGA_TextVal},
+    {"STRINGA_MaxChars",    STRINGA_MaxChars},
+    {"STRINGA_Buffer",      STRINGA_Buffer},
+    /* integer.gadget */
+    {"INTEGER_Number",      INTEGER_Number},
+    {"INTEGER_Minimum",     INTEGER_Minimum},
+    {"INTEGER_Maximum",     INTEGER_Maximum},
+    /* chooser.gadget */
+    {"CHOOSER_Labels",      CHOOSER_Labels},
+    {"CHOOSER_Active",      CHOOSER_Active},
+    {"CHOOSER_Selected",    CHOOSER_Selected},
+    /* listbrowser.gadget */
+    {"LISTBROWSER_Labels",       LISTBROWSER_Labels},
+    {"LISTBROWSER_ColumnInfo",   LISTBROWSER_ColumnInfo},
+    {"LISTBROWSER_SelectedNode", LISTBROWSER_SelectedNode},
+    {"LISTBROWSER_Position",     LISTBROWSER_Position},
+    /* label.image */
+    {"LABEL_Text",          LABEL_Text},
+    {NULL, 0}
+};
+
+static unsigned long
+tag_lookup(PyObject *key)
+{
+    if (PyLong_Check(key)) return PyLong_AsUnsignedLong(key);
+    if (!PyUnicode_Check(key)) {
+        PyErr_SetString(PyExc_TypeError, "tag key must be str or int");
+        return 0;
+    }
+    const char *name = PyUnicode_AsUTF8(key);
+    for (const TagEntry *t = TAG_TABLE; t->name; t++) {
+        if (strcmp(t->name, name) == 0) return t->value;
+    }
+    PyErr_Format(PyExc_KeyError,
+                 "unknown tag name %r — extend TAG_TABLE in _amigamodule.c",
+                 name);
+    return 0;
+}
+
+/* Convert a Python dict of {tag_name_or_int: value} into a
+ * dynamically-allocated struct TagItem[] terminated by TAG_END.
+ * Strings and heap allocations tracked so caller can free after use.
+ * Returns NULL on error (Python exception set); returns allocated
+ * array via *out_tags. Caller must FreeVec(*out_tags) when done. */
+static int
+build_tag_list(PyObject *dict, struct TagItem **out_tags)
+{
+    if (!PyDict_Check(dict)) {
+        PyErr_SetString(PyExc_TypeError, "tags must be a dict");
+        return -1;
+    }
+    Py_ssize_t n = PyDict_Size(dict);
+    struct TagItem *tags = AllocVec(sizeof(struct TagItem) * (n + 1),
+                                     MEMF_ANY | MEMF_CLEAR);
+    if (!tags) { PyErr_NoMemory(); return -1; }
+
+    Py_ssize_t pos = 0, i = 0;
+    PyObject *key, *val;
+    while (PyDict_Next(dict, &pos, &key, &val)) {
+        if (val == Py_None) continue;
+        unsigned long tag = tag_lookup(key);
+        if (PyErr_Occurred()) { FreeVec(tags); return -1; }
+        unsigned long v = 0;
+        if (PyBool_Check(val)) {
+            v = (val == Py_True) ? 1 : 0;
+        } else if (PyLong_Check(val)) {
+            v = PyLong_AsUnsignedLong(val);
+        } else if (PyUnicode_Check(val)) {
+            /* strdup — leaked. Caller responsibility to keep the
+             * source Python string alive OR to accept the leak for
+             * labels that live for process lifetime. */
+            const char *s = PyUnicode_AsUTF8(val);
+            v = (unsigned long)(uintptr_t)dup_str(s ? s : "");
+        } else {
+            PyErr_Format(PyExc_TypeError,
+                         "tag %s: value must be int/bool/str/None",
+                         PyLong_Check(key) ? "" : PyUnicode_AsUTF8(key));
+            FreeVec(tags);
+            return -1;
+        }
+        tags[i].ti_Tag  = tag;
+        tags[i].ti_Data = v;
+        i++;
+    }
+    tags[i].ti_Tag = TAG_END;
+    *out_tags = tags;
+    return 0;
+}
+
+static PyObject *
+py_new_object(PyObject *self, PyObject *args)
+{
+    const char *classname;
+    PyObject *tags_dict;
+    if (!PyArg_ParseTuple(args, "sO", &classname, &tags_dict)) return NULL;
+
+    struct TagItem *tags = NULL;
+    if (build_tag_list(tags_dict, &tags) != 0) return NULL;
+
+    /* NewObject(NULL, "class.name", tag1, val1, ...) — variadic form
+     * unavailable through our tag array. Use NewObjectA which takes
+     * an explicit TagItem array. */
+    Object *obj = NewObjectA(NULL, (STRPTR)classname, tags);
+    FreeVec(tags);
+    if (!obj) {
+        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed", classname);
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)obj);
+}
+
+static PyObject *
+py_dispose_object(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    if (!PyArg_ParseTuple(args, "k", &h)) return NULL;
+    Object *obj = (Object *)(uintptr_t)h;
+    if (obj) DisposeObject(obj);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+py_set_attrs(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    unsigned long win_h = 0;
+    PyObject *tags_dict;
+    /* Optional window handle: if provided, use SetGadgetAttrsA so
+     * the gadget is refreshed. Without a window, plain SetAttrsA. */
+    if (!PyArg_ParseTuple(args, "kO|k", &h, &tags_dict, &win_h))
+        return NULL;
+
+    struct TagItem *tags = NULL;
+    if (build_tag_list(tags_dict, &tags) != 0) return NULL;
+
+    Object *obj = (Object *)(uintptr_t)h;
+    if (win_h) {
+        struct Window *w = (struct Window *)(uintptr_t)win_h;
+        SetGadgetAttrsA((struct Gadget *)obj, w, NULL, tags);
+    } else {
+        SetAttrsA(obj, tags);
+    }
+    FreeVec(tags);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+py_get_attr(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    PyObject *tag_key;
+    if (!PyArg_ParseTuple(args, "kO", &h, &tag_key)) return NULL;
+
+    unsigned long tag = tag_lookup(tag_key);
+    if (PyErr_Occurred()) return NULL;
+
+    Object *obj = (Object *)(uintptr_t)h;
+    unsigned long val = 0;
+    GetAttr(tag, obj, &val);
+    return PyLong_FromUnsignedLong(val);
+}
+
+
+/* --------------------------------------------------------------------- */
 /* ARexx — send commands to any public MsgPort speaking the ARexx        */
 /*         protocol; also drive the REXX interpreter itself.             */
 /* --------------------------------------------------------------------- */
@@ -1255,6 +1701,24 @@ static PyMethodDef amiga_methods[] = {
         "obtain_pen(handle, r, g, b) -> pen index (0..255).  RGB is 8-bit each."},
     {"release_pen",       py_release_pen,       METH_VARARGS,
         "release_pen(handle, pen) — return pen to shared colormap."},
+
+    /* Intuition menu bar */
+    {"set_menu_strip",    py_set_menu_strip,    METH_VARARGS,
+        "set_menu_strip(window, [(title, [(item, shortcut), None|(item, shortcut), ...]), ...]) -> mshandle."},
+    {"clear_menu_strip",  py_clear_menu_strip,  METH_VARARGS,
+        "clear_menu_strip(mshandle) — detach + free menus."},
+    {"menu_pick_decode",  py_menu_pick_decode,  METH_VARARGS,
+        "menu_pick_decode(code) -> (menu, item, sub) — decode IDCMP_MENUPICK code."},
+
+    /* BOOPSI — object-oriented Intuition (buttons, list browsers, layouts) */
+    {"new_object",        py_new_object,        METH_VARARGS,
+        "new_object(classname, {tag: value, ...}) -> handle. Wraps NewObjectA."},
+    {"dispose_object",    py_dispose_object,    METH_VARARGS,
+        "dispose_object(handle) — DisposeObject."},
+    {"set_attrs",         py_set_attrs,         METH_VARARGS,
+        "set_attrs(handle, {tag: value}, window=0) — SetGadgetAttrsA if window given, else SetAttrsA."},
+    {"get_attr",          py_get_attr,          METH_VARARGS,
+        "get_attr(handle, tag) -> int. Wraps GetAttr."},
 
     /* ARexx — send commands to remote ports + drive the REXX interpreter */
     {"rexx_send",         py_rexx_send,         METH_VARARGS,
