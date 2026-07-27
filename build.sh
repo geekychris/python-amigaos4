@@ -106,6 +106,15 @@ if [ "$STAGE" = "make" ]; then
     ppc-amigaos-gcc $CFLAGS_BASE -c /work/amiga_shim.c -o amiga_shim.o
     ppc-amigaos-ar rcs libamiga_shim.a amiga_shim.o
     export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
+    # amissl_lazy.a — replacement for libamisslauto (whose ELF ctor
+    # forces amissl.library open at every process start). Provides
+    # AmiSSLBase/IAmiSSL globals + _amissl_ensure_open helper that
+    # patched PyInit__ssl / PyInit__hashlib call on demand. See
+    # Modules-_ssl-lazy-amissl.patch + Modules-_hashopenssl-lazy-amissl.patch
+    # for the CPython source hooks.
+    ppc-amigaos-gcc $CFLAGS_BASE -c /work/amissl_lazy.c -o amissl_lazy.o
+    ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
+    export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
     # For make (not configure), force-include the shim header so
     # every .c file sees our prototypes / define overrides.
     export CFLAGS="$CFLAGS_BASE -include /work/amiga_shim.h"

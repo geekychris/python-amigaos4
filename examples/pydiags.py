@@ -289,6 +289,119 @@ def check_http(args) -> dict:
         return _err(f"{type(e).__name__} errno={getattr(e, 'errno', None)}: {e}")
 
 
+def check_ssl(args) -> dict:
+    """`pydiags ssl` — check SSL/TLS runtime health.
+
+    Reports each step separately so partial failures are diagnosable:
+      - amissl.library openable?  (via `openssl version`)
+      - AmiSSL: assign present?
+      - `import ssl` works? OPENSSL_VERSION string?
+      - amiga.https module importable?
+      - end-to-end HTTPS GET via amiga.https to https://example.com/
+        (small, predictable, unlikely to change)
+
+    Any step that fails still returns ok=True at the top level with
+    per-step results — this is a diagnostic, not a pass/fail gate.
+    Callers grepping "ok=True" and ignoring the per-step failures are
+    doing it wrong.
+    """
+    result: dict = {"steps": {}}
+
+    # 1. openssl CLI works? (proves amissl.library loads)
+    # AmigaDOS `>file` works for stdout capture; `2>NIL:` gets parsed as
+    # a positional arg by openssl and breaks the invocation. Just accept
+    # that stderr goes to the console during this check.
+    try:
+        rc = os.system("DH1:openssl version >T:_ssl_ver")
+        with open("T:_ssl_ver", "rb") as f:
+            ver_out = f.read().decode("iso-8859-1", errors="replace").strip()
+        try: os.remove("T:_ssl_ver")
+        except OSError: pass
+        result["steps"]["openssl_cli"] = {
+            "ok": rc == 0 and ver_out.startswith("OpenSSL"),
+            "rc": rc, "version": ver_out,
+        }
+    except Exception as e:
+        result["steps"]["openssl_cli"] = {"ok": False, "err": str(e)}
+
+    # 2. AmiSSL: assign present? (via 'assign LIST AmiSSL:')
+    try:
+        rc = os.system("assign LIST AmiSSL: >T:_ssl_asg")
+        with open("T:_ssl_asg", "rb") as f:
+            asg_out = f.read().decode("iso-8859-1", errors="replace")
+        try: os.remove("T:_ssl_asg")
+        except OSError: pass
+        has = "AmiSSL" in asg_out or "AMISSL" in asg_out.upper()
+        result["steps"]["amissl_assign"] = {"ok": has, "rc": rc}
+    except Exception as e:
+        result["steps"]["amissl_assign"] = {"ok": False, "err": str(e)}
+
+    # 3. Python `import ssl` — currently pulls amissl.library at Python
+    # startup (task #93 rebuild), so this always succeeds if we got
+    # here. After the lazy-load rebuild, this checks whether amissl is
+    # actually installed at runtime.
+    try:
+        import ssl
+        result["steps"]["import_ssl"] = {
+            "ok": True,
+            "openssl_version": ssl.OPENSSL_VERSION,
+            "protocols": [p.name for p in ssl.TLSVersion
+                         if isinstance(p, ssl.TLSVersion)],
+        }
+    except ImportError as e:
+        result["steps"]["import_ssl"] = {
+            "ok": False,
+            "err": f"ImportError: {e}",
+            "note": "expected without AmiSSL installed if lazy build",
+        }
+    except Exception as e:
+        result["steps"]["import_ssl"] = {
+            "ok": False, "err": f"{type(e).__name__}: {e}",
+        }
+
+    # 4. amiga.https module importable?
+    try:
+        import amiga.https as ah
+        result["steps"]["import_amiga_https"] = {"ok": True}
+    except ImportError as e:
+        result["steps"]["import_amiga_https"] = {
+            "ok": False, "err": f"ImportError: {e}",
+        }
+        # Can't do end-to-end without it — bail early.
+        return _ok(**result)
+    except Exception as e:
+        result["steps"]["import_amiga_https"] = {
+            "ok": False, "err": f"{type(e).__name__}: {e}",
+        }
+        return _ok(**result)
+
+    # 5. End-to-end HTTPS GET. example.com is small + stable (RFC 2606
+    # reserved for illustrative use; IANA runs a static page there).
+    url = args[0] if args else "https://example.com/"
+    t0 = time.time()
+    try:
+        st, hdrs, body = ah.get(url)
+        result["steps"]["https_get"] = {
+            "ok": st == 200,
+            "url": url,
+            "status": st,
+            "content_type": hdrs.get("content-type", ""),
+            "bytes": len(body),
+            "ms": int((time.time() - t0) * 1000),
+            "preview": body[:120].decode("iso-8859-1", errors="replace"),
+        }
+    except Exception as e:
+        result["steps"]["https_get"] = {
+            "ok": False, "url": url,
+            "err": f"{type(e).__name__}: {e}",
+            "ms": int((time.time() - t0) * 1000),
+        }
+
+    # Convenience: are all steps ok?
+    result["all_ok"] = all(s.get("ok") for s in result["steps"].values())
+    return _ok(**result)
+
+
 def check_tasks(args) -> dict:
     """List Amiga tasks. --top N to cap."""
     if not HAVE_AMIGA:
@@ -416,6 +529,7 @@ REGISTRY = {
     "dns":     ("3-way DNS resolution test",            check_dns),
     "getaddrinfo": ("Isolate socket.getaddrinfo variants", check_getaddrinfo),
     "http":    ("HTTP GET via urllib.request",          check_http),
+    "ssl":     ("HTTPS/TLS end-to-end sanity",          check_ssl),
     # amiga specific
     "tasks":   ("Amiga task list (top-N by priority)",  check_tasks),
     "libs":    ("Exec libraries + open counts",         check_libs),
@@ -458,6 +572,7 @@ def run_tui() -> int:
         "dns":     "hostname              e.g.: example.com",
         "getaddrinfo": "host [port]        e.g.: example.com 80",
         "http":    "url [timeout]         e.g.: http://example.com/",
+        "ssl":     "[url]                 blank runs default probe (example.com)",
         "arexx":   "PORT command...       e.g.: WORKBENCH SAY 'hi'",
         "setenv":  "KEY VALUE             e.g.: FOO bar",
         "assign":  "NAME PATH             e.g.: MYWORK DH1:work",

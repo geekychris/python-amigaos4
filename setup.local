@@ -44,11 +44,15 @@ _sha2 sha2module.c _hacl/Hacl_Hash_SHA2.c -I$(srcdir)/Modules/_hacl/include -DPy
 
 # _ssl and _hashopenssl via AmiSSL.  OS4 openssl routes every symbol
 # through the IAmiSSL interface pointer (SSL_CTX_new becomes
-# IAmiSSL->SSL_CTX_new()).  libamisslauto.a is the same pattern as
-# libauto.a: pull it in and amissl.library gets opened at process
-# startup + IAmiSSL populated, so the header macros resolve at link.
-_ssl _ssl.c -DOPENSSL_NO_SSL3_METHOD -DOPENSSL_NO_TLS1_METHOD -DOPENSSL_NO_TLS1_1_METHOD -DOPENSSL_NO_TLS1_2_METHOD -lamisslauto -lssl -lcrypto
-_hashlib _hashopenssl.c -lamisslauto -lcrypto
+# IAmiSSL->SSL_CTX_new()).  Instead of pulling in libamisslauto —
+# which has an ELF ctor that opens amissl.library at process start,
+# breaking python-os4 launch on systems without AmiSSL — we compile
+# amissl_lazy.c into libamissl_lazy.a (see build.sh, similar pattern
+# to libamiga_shim.a) and load amissl on-demand from patched
+# PyInit__ssl / PyInit__hashlib (see Modules-_ssl-lazy-amissl.patch
+# and Modules-_hashopenssl-lazy-amissl.patch).
+_ssl _ssl.c -DOPENSSL_NO_SSL3_METHOD -DOPENSSL_NO_TLS1_METHOD -DOPENSSL_NO_TLS1_1_METHOD -DOPENSSL_NO_TLS1_2_METHOD -lssl -lcrypto
+_hashlib _hashopenssl.c -lcrypto
 
 # ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*

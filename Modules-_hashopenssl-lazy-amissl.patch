@@ -1,0 +1,21 @@
+--- Python-3.12.7/Modules/_hashopenssl.c.orig	2026-07-27 09:50:44
++++ Python-3.12.7/Modules/_hashopenssl.c	2026-07-27 09:50:44
+@@ -2335,5 +2335,18 @@
+ PyMODINIT_FUNC
+ PyInit__hashlib(void)
+ {
++#ifdef AMIGA
++    /* AmigaOS 4: see amissl_lazy.c + Modules-_ssl-lazy-amissl.patch —
++     * same on-demand amissl open, applied here so `import hashlib`
++     * (which pulls in _hashlib) doesn't need amissl at Python startup. */
++    {
++        extern int _amissl_ensure_open(char *err_msg, unsigned long err_len);
++        char amissl_err[256];
++        if (_amissl_ensure_open(amissl_err, sizeof(amissl_err)) != 0) {
++            PyErr_SetString(PyExc_ImportError, amissl_err);
++            return NULL;
++        }
++    }
++#endif
+     return PyModuleDef_Init(&_hashlibmodule);
+ }

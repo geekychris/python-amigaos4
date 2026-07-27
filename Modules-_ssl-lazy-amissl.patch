@@ -1,0 +1,22 @@
+--- Python-3.12.7/Modules/_ssl.c.orig	2026-07-27 09:50:44
++++ Python-3.12.7/Modules/_ssl.c	2026-07-27 09:50:44
+@@ -6294,5 +6294,19 @@
+ PyMODINIT_FUNC
+ PyInit__ssl(void)
+ {
++#ifdef AMIGA
++    /* AmigaOS 4: open amissl.library on demand instead of at process
++     * startup (libamisslauto's ELF ctor). Lets python-os4 launch on
++     * systems that don't have AmiSSL installed; only `import ssl`
++     * requires it. See amissl_lazy.c for the ensure_open helper. */
++    {
++        extern int _amissl_ensure_open(char *err_msg, unsigned long err_len);
++        char amissl_err[256];
++        if (_amissl_ensure_open(amissl_err, sizeof(amissl_err)) != 0) {
++            PyErr_SetString(PyExc_ImportError, amissl_err);
++            return NULL;
++        }
++    }
++#endif
+     return PyModuleDef_Init(&_sslmodule_def);
+ }
