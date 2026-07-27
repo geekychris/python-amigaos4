@@ -42,19 +42,17 @@ _md5 md5module.c _hacl/Hacl_Hash_MD5.c -I$(srcdir)/Modules/_hacl/include -DPy_BU
 _sha1 sha1module.c _hacl/Hacl_Hash_SHA1.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
 _sha2 sha2module.c _hacl/Hacl_Hash_SHA2.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
 
-# _ssl and _hashopenssl: SDK OpenSSL uses AmiSSL's IAmiSSL interface
-# pattern (SSL_CTX_new is a macro that expands to IAmiSSL->SSL_CTX_new()).
-# Python's stock _ssl.c doesn't know about that indirection, so link
-# fails with undefined refs to IAmiSSL. Would need either:
-#   * an amissl-flavour OpenSSL SDK where symbols are direct calls, or
-#   * a patched _ssl.c that opens amissl.library + calls through IAmiSSL.
-# Parking this — pure-C _sha*/_md5 already unblocks hashlib.
+# _ssl and _hashopenssl via AmiSSL.  OS4 openssl routes every symbol
+# through the IAmiSSL interface pointer (SSL_CTX_new becomes
+# IAmiSSL->SSL_CTX_new()).  libamisslauto.a is the same pattern as
+# libauto.a: pull it in and amissl.library gets opened at process
+# startup + IAmiSSL populated, so the header macros resolve at link.
+_ssl _ssl.c -DOPENSSL_NO_SSL3_METHOD -DOPENSSL_NO_TLS1_METHOD -DOPENSSL_NO_TLS1_1_METHOD -DOPENSSL_NO_TLS1_2_METHOD -lamisslauto -lssl -lcrypto
+_hashlib _hashopenssl.c -lamisslauto -lcrypto
 
 # ---- Truly unsupported: no shims / no libs available yet ----
 *disabled*
 _posixsubprocess
-_ssl
-_hashlib
 syslog
 termios
 grp
