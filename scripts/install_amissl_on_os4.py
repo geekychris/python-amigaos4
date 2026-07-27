@@ -219,36 +219,78 @@ def step_push(local: Path) -> str:
     return remote     # unreachable but keeps typechecker happy
 
 
-def step_extract_and_install(remote_lha: str):
+def _mkdir_ok(path: str) -> None:
+    """makedir that swallows the already-exists error.
+
+    AmigaDOS `makedir X` on an existing X returns non-zero with
+    'MAKEDIR: "X" already exists.' — which alone is fine, but in a
+    multi-line script would abort the rest. We call each makedir in
+    its own dos() call and ignore the exists error explicitly."""
+    out = dos(f"makedir {path}", timeout=8).strip()
+    if out and "already exists" not in out.lower():
+        print(f"    makedir {path}: {out}")
+
+
+def step_extract_and_install(remote_lha: str, extract_dir: str = "RAM:AmiSSL_x"):
     print("=== 6. extracting on OS4")
-    print("   ", dos(f"lha x {remote_lha} RAM:", timeout=120).strip())
+    # OS4 doesn't ship `lha` in C:, but ships xadUnFile which handles
+    # .lha via XAD. IMPORTANT: run as a SINGLE-LINE command — AmigaDOS
+    # `;` starts a comment, so `cd RAM: ; xadUnFile ...` silently drops
+    # the second half. Also pass QUIET, otherwise the per-file progress
+    # (one line per cert, 500+ certs) drowns the bridge and drives the
+    # extraction from 5s to 3+ minutes.
+    _mkdir_ok(extract_dir)
+    ext_cmd = f"xadUnFile {remote_lha} DEST={extract_dir} OVERWRITE QUIET"
+    ext = dos(ext_cmd, timeout=300).strip()
+    print("   ", ext[:400] + ("..." if len(ext) > 400 else ""))
+    if "unknown command" in ext.lower() or "not found" in ext.lower():
+        # Fallback: classic lha binary (rare on OS4, but Utilities/lha
+        # exists on some installs).
+        alt = dos(f"lha x {remote_lha} {extract_dir}/", timeout=300).strip()
+        print("   ", alt)
+
+    # Confirm the master library actually appeared before touching LIBS:
+    # — otherwise a silent extraction failure would nuke the existing
+    # LIBS:amisslmaster.library and leave the system SSL-broken.
+    src_master = f"{extract_dir}/AmiSSL/Libs/AmigaOS4/amisslmaster.library"
+    check = dos(f"list {src_master} QUICK", timeout=8).strip()
+    if "not found" in check.lower() or "no matches" in check.lower() or not check:
+        print(f"    ERR: extraction failed — {src_master} not present")
+        print(f"    keeping {remote_lha} for inspection")
+        sys.exit(1)
 
     print("=== 7. removing any stale old-version AmiSSL libraries")
     # Force-delete the old v097g / v100 lib families so amisslmaster
-    # picks up the newer v3.x one we're about to drop in.  Also delete
+    # picks up the newer v3.x one we're about to drop in. Also delete
     # amisslmaster.library itself in case its layout changed.
     dos("delete LIBS:amisslmaster.library FORCE QUIET", timeout=10)
     dos("delete LIBS:AmiSSL/#? FORCE QUIET ALL", timeout=15)
 
     print("=== 8. copying into LIBS:")
-    dos("makedir LIBS:AmiSSL", timeout=10)
-    print("   ", dos("copy RAM:AmiSSL/Libs/AmigaOS4/amisslmaster.library LIBS:",
-                     timeout=15).strip())
-    print("   ", dos("copy RAM:AmiSSL/Libs/AmigaOS4/AmiSSL/#?.library LIBS:AmiSSL/ ALL",
-                     timeout=30).strip())
+    _mkdir_ok("LIBS:AmiSSL")
+    print("   ", dos(f"copy {src_master} LIBS: CLONE", timeout=15).strip())
+    print("   ", dos(
+        f"copy {extract_dir}/AmiSSL/Libs/AmigaOS4/AmiSSL/#?.library LIBS:AmiSSL/ CLONE ALL",
+        timeout=30).strip())
 
     print("=== 9. installing CA cert bundle")
     # Old AmiSSL asked for a CERT: volume via a modal requester at open
-    # time — very annoying, blocks anything else on the bridge.  New
-    # AmiSSL (3.x) uses AmiSSL:Certs.  Ship the cert bundle so no volume
+    # time — very annoying, blocks anything else on the bridge. New
+    # AmiSSL (3.x) uses AmiSSL:Certs. Ship the cert bundle so no volume
     # prompt fires + HTTPS chains verify.
-    dos("makedir SYS:Prefs/env-archive/AmiSSL", timeout=5)
-    dos("makedir DH1:AmiSSL DH1:AmiSSL/Certs", timeout=10)
-    print("   ", dos("copy RAM:AmiSSL/Certs/#? DH1:AmiSSL/Certs/ ALL QUIET",
-                     timeout=60).strip())
+    _mkdir_ok("DH1:AmiSSL")
+    _mkdir_ok("DH1:AmiSSL/Certs")
+    print("   ", dos(
+        f"copy {extract_dir}/AmiSSL/Certs/#? DH1:AmiSSL/Certs/ ALL QUIET CLONE",
+        timeout=180).strip())
     dos("assign AmiSSL: DH1:AmiSSL", timeout=5)
-    # Also mirror into user-startup so it survives reboots.
-    dos('echo "assign AmiSSL: DH1:AmiSSL" >>S:User-Startup', timeout=5)
+    # Also mirror into user-startup so it survives reboots. Guard on
+    # grep so we don't append duplicate lines on rerun. AmigaDOS `search`
+    # is the equivalent of grep -q.
+    already = dos('search S:User-Startup PATTERN="assign AmiSSL:" QUIET',
+                  timeout=5).strip()
+    if not already or "not found" in already.lower() or "no matches" in already.lower():
+        dos('echo >>S:User-Startup "assign AmiSSL: DH1:AmiSSL"', timeout=5)
 
     print("=== 10. verifying")
     print("   ", dos("list LIBS:amisslmaster.library LIBS:AmiSSL/#? QUICK",
@@ -256,7 +298,7 @@ def step_extract_and_install(remote_lha: str):
 
     print("=== 11. cleanup")
     dos(f"delete {remote_lha} QUIET", timeout=10)
-    dos("delete RAM:AmiSSL ALL QUIET", timeout=15)
+    dos(f"delete {extract_dir} ALL QUIET", timeout=30)
 
 
 def step_smoke_test():
