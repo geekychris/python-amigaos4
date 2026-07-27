@@ -37,6 +37,7 @@ import urllib.request
 from pathlib import Path
 
 
+FORCE        = "--force" in sys.argv[1:] or bool(os.environ.get("AMISSL_FORCE"))
 AMISSL_TAG   = os.environ.get("AMISSL_TAG", "")     # blank = ask GitHub
 AMISSL_CACHE = Path(os.environ.get("AMISSL_CACHE",
                                     Path.home() / ".cache" / "amissl"))
@@ -73,12 +74,17 @@ def _api(path: str, *, method: str = "GET", body: dict | None = None,
 
 
 def dos(cmd: str, timeout: int = 20) -> str:
-    r = _api("/api/command", method="POST",
-             body={"command": cmd}, timeout=timeout + 10.0)
-    # api_command returns {"output": "..."} or {"error": "..."}
+    """Run an AmigaDOS shell command via the bridge SCRIPT path.
+
+    /api/command routes structured protocol commands (GETVAR/SETVAR/
+    CALLHOOK/etc.) to registered clients, not raw shell commands.
+    /api/script wraps the input in an AmigaDOS script that the bridge
+    executes via Execute() on the target, capturing stdout/stderr."""
+    r = _api("/api/script", method="POST",
+             body={"script": cmd}, timeout=timeout + 10.0)
     if "error" in r:
         return f"ERR: {r['error']}"
-    return str(r.get("output") or r.get("message") or r)
+    return str(r.get("output") or r.get("status") or r)
 
 
 def push(local: Path, remote: str) -> str:
@@ -119,7 +125,18 @@ def step_already_installed() -> bool:
     print("=== 2. is AmiSSL already there?")
     r = dos("list LIBS:amisslmaster.library LIBS:AmiSSL/#? QUICK", timeout=8)
     print(f"    {r.strip()}")
-    ok = "amisslmaster.library" in r and "amissl_v" in r
+    if FORCE:
+        print("    --force: will reinstall regardless")
+        return False
+    # Only accept a modern amissl_v3xx.library — old v097g etc. still
+    # trigger the "please insert CERT: volume" requester at startup.
+    has_master = "amisslmaster.library" in r
+    has_modern = any(f"amissl_v{v}" in r for v in ("300", "310", "320", "330",
+                                                     "340", "350", "360", "362", "370"))
+    ok = has_master and has_modern
+    if has_master and not has_modern and not ok:
+        print("    OLD AmiSSL detected (v097g or similar).  Re-run with "
+              "--force to replace with v3.x.")
     print(f"    installed: {ok}")
     return ok
 
@@ -204,20 +221,40 @@ def step_push(local: Path) -> str:
 
 def step_extract_and_install(remote_lha: str):
     print("=== 6. extracting on OS4")
-    print("   ", dos(f"lha x {remote_lha} RAM:", timeout=60).strip())
+    print("   ", dos(f"lha x {remote_lha} RAM:", timeout=120).strip())
 
-    print("=== 7. copying into LIBS:")
+    print("=== 7. removing any stale old-version AmiSSL libraries")
+    # Force-delete the old v097g / v100 lib families so amisslmaster
+    # picks up the newer v3.x one we're about to drop in.  Also delete
+    # amisslmaster.library itself in case its layout changed.
+    dos("delete LIBS:amisslmaster.library FORCE QUIET", timeout=10)
+    dos("delete LIBS:AmiSSL/#? FORCE QUIET ALL", timeout=15)
+
+    print("=== 8. copying into LIBS:")
     dos("makedir LIBS:AmiSSL", timeout=10)
     print("   ", dos("copy RAM:AmiSSL/Libs/AmigaOS4/amisslmaster.library LIBS:",
                      timeout=15).strip())
     print("   ", dos("copy RAM:AmiSSL/Libs/AmigaOS4/AmiSSL/#?.library LIBS:AmiSSL/ ALL",
                      timeout=30).strip())
 
-    print("=== 8. verifying")
+    print("=== 9. installing CA cert bundle")
+    # Old AmiSSL asked for a CERT: volume via a modal requester at open
+    # time — very annoying, blocks anything else on the bridge.  New
+    # AmiSSL (3.x) uses AmiSSL:Certs.  Ship the cert bundle so no volume
+    # prompt fires + HTTPS chains verify.
+    dos("makedir SYS:Prefs/env-archive/AmiSSL", timeout=5)
+    dos("makedir DH1:AmiSSL DH1:AmiSSL/Certs", timeout=10)
+    print("   ", dos("copy RAM:AmiSSL/Certs/#? DH1:AmiSSL/Certs/ ALL QUIET",
+                     timeout=60).strip())
+    dos("assign AmiSSL: DH1:AmiSSL", timeout=5)
+    # Also mirror into user-startup so it survives reboots.
+    dos('echo "assign AmiSSL: DH1:AmiSSL" >>S:User-Startup', timeout=5)
+
+    print("=== 10. verifying")
     print("   ", dos("list LIBS:amisslmaster.library LIBS:AmiSSL/#? QUICK",
                      timeout=8).strip())
 
-    print("=== 9. cleanup")
+    print("=== 11. cleanup")
     dos(f"delete {remote_lha} QUIET", timeout=10)
     dos("delete RAM:AmiSSL ALL QUIET", timeout=15)
 
