@@ -1,15 +1,16 @@
-"""reaction_form.py — a working form with visible widgets.
+"""reaction_form.py — a working editable form via _amiga.open_dialog.
 
-Opens a real Intuition window containing labeled string fields and
-OK/Cancel buttons via _amiga.open_dialog. Every field is editable;
-OK returns the collected values, Cancel returns None.
+Opens a real Intuition window with labeled string fields you can
+edit — the labels line up with their gadgets now that _amigamodule.c
+draws them in the same coordinate frame as the gadget positions.
 
-For the BOOPSI/ReAction path (button.gadget + layout.gadget +
-window.class + WM_OPEN), see boopsi_probe.py. Full window.class
-integration needs a multi-value LAYOUT_AddChild helper we haven't
-built yet — the current BOOPSI surface can allocate the objects
-(_amiga.new_object works) but can't yet render them into a
-resizable ReAction window from Python alone.
+The full BOOPSI/ReAction path (window.class + WM_OPEN with a
+layout.gadget root) still needs work — window.class on OS4 wants
+OpenClass()-ed class pointers or a properly-scoped screen context
+before WM_OPEN succeeds. See boopsi_probe.py to confirm the object
+model itself works (NewObject / SetAttrs / DoMethod all present +
+functional against button.gadget / string.gadget / layout.gadget /
+listbrowser.gadget).
 
 Run:
     DH1:python-os4 DH1:pytests/examples/reaction_form.py
@@ -20,28 +21,22 @@ sys.path.insert(0, "DH1:pytests/amiga_bindings")
 import _amiga
 
 
-def prompt(title, fields, ok_label="OK", cancel_label="Cancel"):
+def main():
+    print("reaction_form: opening person-entry dialog...", flush=True)
     h = _amiga.open_dialog(
-        title=title, fields=fields,
-        ok_label=ok_label, cancel_label=cancel_label,
+        title="New person",
+        fields=[("Name",  "",                40),
+                ("Age",   "30",               5),
+                ("Email", "you@example.com", 60),
+                ("Notes", "",               120)],
+        ok_label="Save", cancel_label="Cancel",
         left=140, top=100,
     )
     try:
-        return _amiga.run_dialog(h)
+        result = _amiga.run_dialog(h)
     finally:
         _amiga.close_dialog(h)
 
-
-def main():
-    print("reaction_form: opening person-entry dialog...", flush=True)
-    result = prompt(
-        "New person",
-        [("Name",   "",             40),
-         ("Age",    "30",            5),
-         ("Email",  "you@example.com", 60),
-         ("Notes",  "",            120)],
-        ok_label="Save", cancel_label="Cancel",
-    )
     if result is None:
         print("reaction_form: cancelled.", flush=True)
         return 0

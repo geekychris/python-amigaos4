@@ -739,13 +739,19 @@ py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    /* Draw the labels to the left of each string gadget. */
+    /* Draw the labels to the left of each string gadget.  The
+     * RastPort's origin is at the outer-window top-left (same coord
+     * frame as Gadget.TopEdge / LeftEdge), so we DON'T add BorderTop
+     * here — doing so shifted labels one row down from their fields,
+     * making the whole form look scrambled ("30" above the "Age"
+     * label, "you@example.com" opposite "Name", etc). */
     struct RastPort *rp = dlg->win->RPort;
     SetAPen(rp, 1);
     for (int i = 0; i < dlg->n_fields; i++) {
-        int ly = 22 + i * (DIALOG_GADGET_H + DIALOG_ROW_SPACING);
+        struct Gadget *g = dlg->fields[i].gadget;
+        if (!g) continue;
         Move(rp, dlg->win->BorderLeft + 8,
-                 dlg->win->BorderTop + ly + DIALOG_GADGET_H - 3);
+                 g->TopEdge + g->Height - 3);
         Text(rp, (STRPTR)dlg->fields[i].label,
                  (LONG)strlen(dlg->fields[i].label));
     }
@@ -1364,6 +1370,74 @@ py_new_object(PyObject *self, PyObject *args)
     return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)obj);
 }
 
+/* Same as new_object but accepts a LIST of (tag, value) pairs so tags
+ * can repeat — critical for layout.gadget's LAYOUT_AddChild which
+ * needs one occurrence per child. Python dict keys are unique, so
+ * this is the only way to attach multiple children to a layout at
+ * NewObject time (which some layout builds require rather than
+ * accepting AddChild via later SetAttrs). */
+static PyObject *
+py_new_object_multi(PyObject *self, PyObject *args)
+{
+    const char *classname;
+    PyObject *tags_list;
+    if (!PyArg_ParseTuple(args, "sO", &classname, &tags_list)) return NULL;
+
+    if (!PyList_Check(tags_list) && !PyTuple_Check(tags_list)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "new_object_multi: second arg must be list of (tag, value)");
+        return NULL;
+    }
+    Py_ssize_t n = PySequence_Length(tags_list);
+    struct TagItem *tags = AllocVec(sizeof(struct TagItem) * (n + 1),
+                                     MEMF_ANY | MEMF_CLEAR);
+    if (!tags) { PyErr_NoMemory(); return NULL; }
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *pair = PySequence_GetItem(tags_list, i);   /* new ref */
+        if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 2) {
+            Py_XDECREF(pair);
+            FreeVec(tags);
+            PyErr_Format(PyExc_TypeError,
+                         "new_object_multi: entry %zd must be (tag, value) tuple", i);
+            return NULL;
+        }
+        PyObject *key = PyTuple_GetItem(pair, 0);
+        PyObject *val = PyTuple_GetItem(pair, 1);
+
+        unsigned long tag = tag_lookup(key);
+        if (PyErr_Occurred()) { Py_DECREF(pair); FreeVec(tags); return NULL; }
+
+        unsigned long v = 0;
+        if (val == Py_None) {
+            v = 0;
+        } else if (PyBool_Check(val)) {
+            v = (val == Py_True) ? 1 : 0;
+        } else if (PyLong_Check(val)) {
+            v = PyLong_AsUnsignedLong(val);
+        } else if (PyUnicode_Check(val)) {
+            v = (unsigned long)(uintptr_t)dup_str(PyUnicode_AsUTF8(val));
+        } else {
+            Py_DECREF(pair); FreeVec(tags);
+            PyErr_Format(PyExc_TypeError,
+                         "new_object_multi entry %zd value: int/bool/str/None only", i);
+            return NULL;
+        }
+        tags[i].ti_Tag  = tag;
+        tags[i].ti_Data = v;
+        Py_DECREF(pair);
+    }
+    tags[n].ti_Tag = TAG_END;
+
+    Object *obj = NewObjectA(NULL, (STRPTR)classname, tags);
+    FreeVec(tags);
+    if (!obj) {
+        PyErr_Format(PyExc_RuntimeError, "NewObject(%s) failed", classname);
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)obj);
+}
+
 static PyObject *
 py_dispose_object(PyObject *self, PyObject *args)
 {
@@ -1783,6 +1857,8 @@ static PyMethodDef amiga_methods[] = {
     /* BOOPSI — object-oriented Intuition (buttons, list browsers, layouts) */
     {"new_object",        py_new_object,        METH_VARARGS,
         "new_object(classname, {tag: value, ...}) -> handle. Wraps NewObjectA."},
+    {"new_object_multi",  py_new_object_multi,  METH_VARARGS,
+        "new_object_multi(classname, [(tag, value), ...]) -> handle. Like new_object but tags can repeat (needed for LAYOUT_AddChild)."},
     {"dispose_object",    py_dispose_object,    METH_VARARGS,
         "dispose_object(handle) — DisposeObject."},
     {"set_attrs",         py_set_attrs,         METH_VARARGS,
