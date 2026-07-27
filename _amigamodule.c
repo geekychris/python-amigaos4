@@ -1415,6 +1415,76 @@ py_get_attr(PyObject *self, PyObject *args)
     return PyLong_FromUnsignedLong(val);
 }
 
+/* IDoMethod on a BOOPSI object. Extra positional args are passed as
+ * ULONG-sized arguments to the method. The method id + args stream
+ * IS the message the class sees; classes doc which method takes
+ * which args. Return value is the method's return (ULONG) as int.
+ *
+ * Example — open a window.class window:
+ *     _amiga.do_method(win_obj, WM_OPEN)         → Window * or 0
+ *     _amiga.do_method(win_obj, WM_CLOSE)        → 0
+ *     _amiga.do_method(win_obj, WM_HANDLEINPUT, sig)  → next state
+ */
+static PyObject *
+py_do_method(PyObject *self, PyObject *args)
+{
+    Py_ssize_t nargs = PyTuple_Size(args);
+    if (nargs < 2) {
+        PyErr_SetString(PyExc_TypeError,
+                        "do_method(handle, method_id, *args) — need at least 2");
+        return NULL;
+    }
+    unsigned long h = PyLong_AsUnsignedLong(PyTuple_GetItem(args, 0));
+    unsigned long method_id = PyLong_AsUnsignedLong(PyTuple_GetItem(args, 1));
+    if (PyErr_Occurred()) return NULL;
+    Object *obj = (Object *)(uintptr_t)h;
+    if (!obj) {
+        PyErr_SetString(PyExc_ValueError, "null object handle");
+        return NULL;
+    }
+
+    /* Collect up to 8 extra ULONG args. IDoMethod's variadic path
+     * on OS4 goes through the interface's vector — internally it
+     * marshals to a stack buffer, so we can safely call with a
+     * fixed count and let the class ignore anything past what it
+     * expects. */
+    unsigned long a[8] = {0};
+    for (Py_ssize_t i = 2; i < nargs && (i - 2) < 8; i++) {
+        PyObject *v = PyTuple_GetItem(args, i);
+        if (PyLong_Check(v)) {
+            a[i - 2] = PyLong_AsUnsignedLong(v);
+        } else if (PyBool_Check(v)) {
+            a[i - 2] = (v == Py_True) ? 1 : 0;
+        } else if (PyUnicode_Check(v)) {
+            /* Leak strdup — caller lifetime. Fine for method
+             * arguments that name windows / labels. */
+            a[i - 2] = (unsigned long)(uintptr_t)dup_str(PyUnicode_AsUTF8(v));
+        } else if (v == Py_None) {
+            a[i - 2] = 0;
+        } else {
+            PyErr_Format(PyExc_TypeError,
+                         "do_method arg %zd: must be int/bool/str/None", i);
+            return NULL;
+        }
+    }
+    /* Build a fake IntuiMessage-style call — actually just IDoMethod
+     * with the method id + a stream of ULONGs. IDoMethod signature is
+     * variadic; use the pointer form when we have >0 args. */
+    ULONG rc = IDoMethod(obj, (Msg)&method_id);
+    /* NOTE: For simple stateless methods (WM_OPEN, WM_CLOSE, DISPOSE)
+     * a single-ULONG "message" suffices — the class only reads
+     * MethodID from the first ULONG. Methods that take arguments
+     * expect a struct so we build one on the stack: */
+    if (nargs > 2) {
+        unsigned long msg[16] = { method_id };
+        for (Py_ssize_t i = 2; i < nargs && (i - 2) < 15; i++) {
+            msg[i - 1] = a[i - 2];
+        }
+        rc = IDoMethod(obj, (Msg)msg);
+    }
+    return PyLong_FromUnsignedLong(rc);
+}
+
 
 /* --------------------------------------------------------------------- */
 /* ARexx — send commands to any public MsgPort speaking the ARexx        */
@@ -1719,6 +1789,8 @@ static PyMethodDef amiga_methods[] = {
         "set_attrs(handle, {tag: value}, window=0) — SetGadgetAttrsA if window given, else SetAttrsA."},
     {"get_attr",          py_get_attr,          METH_VARARGS,
         "get_attr(handle, tag) -> int. Wraps GetAttr."},
+    {"do_method",         py_do_method,         METH_VARARGS,
+        "do_method(handle, method_id, *args) -> int. Wraps IDoMethod."},
 
     /* ARexx — send commands to remote ports + drive the REXX interpreter */
     {"rexx_send",         py_rexx_send,         METH_VARARGS,
@@ -1825,6 +1897,24 @@ PyInit__amiga(void)
     PyModule_AddIntConstant(m, "WFLG_ACTIVATE",         WFLG_ACTIVATE);
     PyModule_AddIntConstant(m, "WFLG_SIMPLE_REFRESH",   WFLG_SIMPLE_REFRESH);
     PyModule_AddIntConstant(m, "WFLG_SMART_REFRESH",    WFLG_SMART_REFRESH);
+
+    /* BOOPSI method constants — for _amiga.do_method(win_obj, WM_OPEN)
+     * etc. All from <classes/window.h>. */
+    PyModule_AddIntConstant(m, "WM_OPEN",         WM_OPEN);
+    PyModule_AddIntConstant(m, "WM_CLOSE",        WM_CLOSE);
+    PyModule_AddIntConstant(m, "WM_HANDLEINPUT",  WM_HANDLEINPUT);
+
+    /* WMHI_* IDCMP-like return codes from WM_HANDLEINPUT. */
+    PyModule_AddIntConstant(m, "WMHI_LASTMSG",       WMHI_LASTMSG);
+    PyModule_AddIntConstant(m, "WMHI_CLASSMASK",     WMHI_CLASSMASK);
+    PyModule_AddIntConstant(m, "WMHI_GADGETMASK",    WMHI_GADGETMASK);
+    PyModule_AddIntConstant(m, "WMHI_CLOSEWINDOW",   WMHI_CLOSEWINDOW);
+    PyModule_AddIntConstant(m, "WMHI_GADGETUP",      WMHI_GADGETUP);
+    PyModule_AddIntConstant(m, "WMHI_MENUPICK",      WMHI_MENUPICK);
+    PyModule_AddIntConstant(m, "WMHI_RAWKEY",        WMHI_RAWKEY);
+    PyModule_AddIntConstant(m, "WMHI_VANILLAKEY",    WMHI_VANILLAKEY);
+    PyModule_AddIntConstant(m, "WMHI_NEWSIZE",       WMHI_NEWSIZE);
+    PyModule_AddIntConstant(m, "WMHI_INTUITICK",     WMHI_INTUITICK);
 
     return m;
 }

@@ -1,14 +1,15 @@
-"""reaction_form.py — proves BOOPSI / layout.gadget from Python.
+"""reaction_form.py — a working form with visible widgets.
 
-Builds a small form with a labeled string field, a labeled integer,
-and OK/Cancel buttons — all held together by a layout.gadget so the
-window is resizable and the widgets stay tidy. The point of this
-demo is *not* the form; it's that new_object / set_attrs / layout.gadget
-work at all from Python. Any of the widgets can be extended or new
-classes added by editing amiga.reaction.
+Opens a real Intuition window containing labeled string fields and
+OK/Cancel buttons via _amiga.open_dialog. Every field is editable;
+OK returns the collected values, Cancel returns None.
 
-If the BOOPSI kit isn't available (older python-os4 build), prints
-a stub message and exits.
+For the BOOPSI/ReAction path (button.gadget + layout.gadget +
+window.class + WM_OPEN), see boopsi_probe.py. Full window.class
+integration needs a multi-value LAYOUT_AddChild helper we haven't
+built yet — the current BOOPSI surface can allocate the objects
+(_amiga.new_object works) but can't yet render them into a
+resizable ReAction window from Python alone.
 
 Run:
     DH1:python-os4 DH1:pytests/examples/reaction_form.py
@@ -16,90 +17,40 @@ Run:
 import sys
 sys.path.insert(0, "DH1:pytests/amiga_bindings")
 
-try:
-    import _amiga
-    from amiga import reaction as rx
-except ImportError as e:
-    print(f"reaction_form: needs BOOPSI-enabled _amiga build ({e})")
-    sys.exit(1)
+import _amiga
 
-if not hasattr(_amiga, "new_object"):
-    print("reaction_form: this python-os4 build predates BOOPSI. "
-          "Rebuild with the amissl_lazy + BOOPSI patch series.")
-    sys.exit(2)
+
+def prompt(title, fields, ok_label="OK", cancel_label="Cancel"):
+    h = _amiga.open_dialog(
+        title=title, fields=fields,
+        ok_label=ok_label, cancel_label=cancel_label,
+        left=140, top=100,
+    )
+    try:
+        return _amiga.run_dialog(h)
+    finally:
+        _amiga.close_dialog(h)
 
 
 def main():
-    # Build the widget graph.
-    name  = rx.StringGadget(default="",   id=10, max_chars=40)
-    age   = rx.IntegerGadget(default=30,  id=11, min=0, max=200)
-    ok    = rx.Button("OK",     id=1)
-    cancel = rx.Button("Cancel", id=2)
-
-    # LABEL on each entry field, then stack them vertically.
-    rx.Labeled("Name:", name)
-    rx.Labeled("Age:",  age)
-
-    # Buttons in a horizontal row.
-    button_row = rx.LayoutGroup(
-        orientation=rx.LAYOUT_ORIENT_HORIZ,
-        children=[ok, cancel],
+    print("reaction_form: opening person-entry dialog...", flush=True)
+    result = prompt(
+        "New person",
+        [("Name",   "",             40),
+         ("Age",    "30",            5),
+         ("Email",  "you@example.com", 60),
+         ("Notes",  "",            120)],
+        ok_label="Save", cancel_label="Cancel",
     )
-    root = rx.LayoutGroup(
-        orientation=rx.LAYOUT_ORIENT_VERT,
-        children=[name, age, button_row],
-    )
-
-    # Open a plain window and attach the layout as the top-level gadget.
-    # (A full ReAction wrap of window.class is not implemented yet — we
-    # embed the layout into a regular Intuition window's gadget list.)
-    handle = _amiga.open_window(
-        title="Python BOOPSI form",
-        left=120, top=100, width=420, height=200,
-        idcmp=(_amiga.IDCMP_CLOSEWINDOW
-               | _amiga.IDCMP_VANILLAKEY
-               | _amiga.IDCMP_GADGETUP),
-    )
-    print(f"reaction_form: window @ {hex(handle)}", flush=True)
-    print(f"reaction_form: root layout handle = {hex(root.handle)}",
-          flush=True)
-    print("reaction_form: (this demo builds the objects; embedding into"
-          " a Reaction window.class needs a follow-up rebuild)",
-          flush=True)
-
-    _amiga.clear_window(handle, 0)
-    _amiga.draw_text(handle, 8, 20,
-                     "BOOPSI form built (see stdout).", 1)
-    _amiga.draw_text(handle, 8, 40,
-                     f"  StringGadget @ {hex(name.handle)}", 1)
-    _amiga.draw_text(handle, 8, 55,
-                     f"  IntegerGadget @ {hex(age.handle)}", 1)
-    _amiga.draw_text(handle, 8, 70,
-                     f"  Button 'OK'  @ {hex(ok.handle)}", 1)
-    _amiga.draw_text(handle, 8, 85,
-                     f"  Button 'Cancel' @ {hex(cancel.handle)}", 1)
-    _amiga.draw_text(handle, 8, 100,
-                     f"  Layout root @ {hex(root.handle)}", 1)
-    _amiga.draw_text(handle, 8, 130,
-                     "Close window or ESC to dispose all objects.", 1)
-
-    running = True
-    while running:
-        ev = _amiga.wait_message(handle, 5.0)
-        if ev is None:
-            continue
-        cls = ev["class"]
-        if cls == _amiga.IDCMP_CLOSEWINDOW:
-            running = False
-        elif cls == _amiga.IDCMP_VANILLAKEY and ev["code"] == 27:
-            running = False
-
-    _amiga.close_window(handle)
-    # Dispose in reverse dependency order (leaves before roots).
-    for obj in (ok, cancel, name, age, button_row, root):
-        obj.dispose()
-    print("reaction_form: all BOOPSI objects disposed.", flush=True)
+    if result is None:
+        print("reaction_form: cancelled.", flush=True)
+        return 0
+    print("reaction_form: values collected:", flush=True)
+    for label, val in result.items():
+        print(f"  {label:<8}= {val!r}", flush=True)
+    print("reaction_form: done.", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
