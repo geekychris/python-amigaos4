@@ -70,6 +70,7 @@ def post_install():
             try:
                 f.write("\n; --- Python 3.12.7 for AmigaOS 4 ---\n")
                 f.write("Assign python3: SYS:System/python3\n")
+                f.write("Path python3:bin ADD\n")
                 f.write("; --- End Python 3 ---\n")
             finally:
                 f.close()

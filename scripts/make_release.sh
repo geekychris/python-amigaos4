@@ -78,17 +78,25 @@ rm -rf "$SYS_DIR/lib/sqlite3/test"
 find "$SYS_DIR/lib" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find "$SYS_DIR/lib" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# 5. Pre-install pip into site-packages and create C/pip3 launcher
+# 5. Pre-install pip into site-packages and create System/python3/bin & C/pip3 launchers
 echo "-> Pre-installing pip into System/python3/lib/site-packages..."
 mkdir -p "$SYS_DIR/lib/site-packages"
 python3 -c "import zipfile; zipfile.ZipFile('$STDLIB_SRC/ensurepip/_bundled/pip-24.2-py3-none-any.whl').extractall('$SYS_DIR/lib/site-packages')"
 
-echo "-> Creating C/pip3 launcher script..."
-cat << 'EOF' > "$STAGE_DIR/C/pip3"
+echo "-> Creating System/python3/bin helper tools..."
+mkdir -p "$SYS_DIR/bin"
+if [ -d "$REPO/bin" ]; then
+    cp -r "$REPO/bin"/* "$SYS_DIR/bin/"
+else
+    cat << 'EOF' > "$SYS_DIR/bin/pip3"
 .key ARGS/F
 python3 -m pip <ARGS>
 EOF
-chmod +x "$STAGE_DIR/C/pip3"
+    cp -f "$SYS_DIR/bin/pip3" "$SYS_DIR/bin/pip"
+fi
+chmod +x "$SYS_DIR/bin"/* 2>/dev/null || true
+
+cp -f "$SYS_DIR/bin/pip3" "$STAGE_DIR/C/pip3" 2>/dev/null || true
 
 # 6. Copy Amiga Bindings
 echo "-> Copying amiga_bindings to System/python3/amiga_bindings..."
@@ -110,6 +118,7 @@ fi
 [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$SYS_DIR/LICENSE"
 [ -f "$REPO/Install-Python3" ] && cp "$REPO/Install-Python3" "$STAGE_DIR/Install-Python3"
 [ -f "$REPO/Install-Python3.info" ] && cp "$REPO/Install-Python3.info" "$STAGE_DIR/Install-Python3.info"
+[ -f "$REPO/autoinstall" ] && cp "$REPO/autoinstall" "$STAGE_DIR/autoinstall"
 
 
 # 7. Create Startup Script Snippet
@@ -117,8 +126,9 @@ echo "-> Creating S/Package-Startup..."
 mkdir -p "$SYS_DIR/S"
 cat << 'EOF' > "$SYS_DIR/S/Package-Startup"
 ; Python 3.12 for AmigaOS 4.1
-; Add this line to your S:User-Startup:
-Assign python3: System:python3
+; Add these lines to your S:User-Startup:
+Assign python3: SYS:System/python3
+Path python3:bin ADD
 
 ; Run these commands once in a Shell to persist environment variables:
 SetEnv PYTHONHOME SAVE python3:
