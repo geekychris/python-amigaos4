@@ -275,3 +275,74 @@ __attribute__((constructor)) static void amiga_suppress_requesters(void)
         }
     }
 }
+
+/* --- AmigaOS POSIX Path Converter & File Function Shims ------------
+ * Translates Amiga native volume paths (e.g. "python3:lib", "System:foo")
+ * to absolute POSIX paths (e.g. "/python3/lib", "/System/foo") before
+ * passing to OS4 newlib POSIX file functions. Prevents newlib from
+ * treating un-slashed volume paths as relative, prepending CWD, and
+ * corrupting the volume string into "/ython3:" or "/ystem:". */
+const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
+{
+    if (!path || !*path || !buf || buflen < 4) return path;
+    if (path[0] == '/') return path;
+
+    const char *colon = strchr(path, ':');
+    const char *slash = strchr(path, '/');
+    const char *backslash = strchr(path, '\\');
+
+    if (colon && colon > path && (!slash || colon < slash) && (!backslash || colon < backslash)) {
+        size_t vol_len = colon - path;
+        const char *rest = colon + 1;
+        if (rest[0] == '/' || rest[0] == '\\') rest++;
+
+        snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
+        return buf;
+    }
+
+    return path;
+}
+
+#undef stat
+#undef lstat
+#undef access
+#undef open
+#undef opendir
+
+int amiga_stat(const char *path, struct stat *buf)
+{
+    char pbuf[1024];
+    return stat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
+}
+
+int amiga_lstat(const char *path, struct stat *buf)
+{
+    char pbuf[1024];
+    return lstat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
+}
+
+int amiga_access(const char *path, int mode)
+{
+    char pbuf[1024];
+    return access(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
+}
+
+int amiga_open(const char *path, int flags, ...)
+{
+    char pbuf[1024];
+    const char *ppath = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+    }
+    return open(ppath, flags, mode);
+}
+
+DIR *amiga_opendir(const char *name)
+{
+    char pbuf[1024];
+    return opendir(amiga_to_posix_path(name, pbuf, sizeof(pbuf)));
+}

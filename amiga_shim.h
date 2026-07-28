@@ -113,6 +113,31 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex);
 #define pthread_mutex_destroy amiga_pthread_mutex_destroy
 
+/* -------------------------------------------------------------------------
+ * AmigaOS path normalization shims — OS4 newlib POSIX path translation
+ * requires absolute paths to start with '/'. If an Amiga path with a volume
+ * colon (e.g. "python3:lib", "System:System/python3") is passed to file functions
+ * without a leading '/', newlib treats it as relative to CWD, prepending CWD
+ * and corrupting the volume string into "/ython3:" or "/ystem:".
+ * ---------------------------------------------------------------------- */
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <stdarg.h>
+
+const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen);
+int amiga_stat(const char *path, struct stat *buf);
+int amiga_lstat(const char *path, struct stat *buf);
+int amiga_access(const char *path, int mode);
+int amiga_open(const char *path, int flags, ...);
+DIR *amiga_opendir(const char *name);
+
+#define stat(p, b) amiga_stat(p, b)
+#define lstat(p, b) amiga_lstat(p, b)
+#define access(p, m) amiga_access(p, m)
+#define open(p, ...) amiga_open(p, __VA_ARGS__)
+#define opendir(n) amiga_opendir(n)
+
 #ifdef __cplusplus
 }
 #endif
