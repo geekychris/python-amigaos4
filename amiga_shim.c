@@ -308,6 +308,18 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 #undef access
 #undef open
 #undef opendir
+#undef fopen
+#undef freopen
+#undef chdir
+#undef mkdir
+#undef rmdir
+#undef unlink
+#undef remove
+#undef rename
+#undef realpath
+#undef readlink
+#undef chmod
+#undef utime
 
 int amiga_stat(const char *path, struct stat *buf)
 {
@@ -345,4 +357,79 @@ DIR *amiga_opendir(const char *name)
 {
     char pbuf[1024];
     return opendir(amiga_to_posix_path(name, pbuf, sizeof(pbuf)));
+}
+
+FILE *amiga_fopen(const char *filename, const char *mode)
+{
+    char pbuf[1024];
+    return fopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode);
+}
+
+FILE *amiga_freopen(const char *filename, const char *mode, FILE *stream)
+{
+    char pbuf[1024];
+    return freopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode, stream);
+}
+
+int amiga_chdir(const char *path)
+{
+    char pbuf[1024];
+    return chdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+}
+
+int amiga_mkdir(const char *path, mode_t mode)
+{
+    char pbuf[1024];
+    return mkdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
+}
+
+int amiga_rmdir(const char *path)
+{
+    char pbuf[1024];
+    return rmdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+}
+
+int amiga_unlink(const char *path)
+{
+    char pbuf[1024];
+    return unlink(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+}
+
+int amiga_remove(const char *path)
+{
+    char pbuf[1024];
+    return remove(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+}
+
+int amiga_rename(const char *oldpath, const char *newpath)
+{
+    char pbuf1[1024], pbuf2[1024];
+    return rename(
+        amiga_to_posix_path(oldpath, pbuf1, sizeof(pbuf1)),
+        amiga_to_posix_path(newpath, pbuf2, sizeof(pbuf2))
+    );
+}
+
+char *amiga_realpath(const char *path, char *resolved_path)
+{
+    char pbuf[1024];
+    return realpath(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), resolved_path);
+}
+
+ssize_t amiga_readlink(const char *path, char *buf, size_t bufsiz)
+{
+    char pbuf[1024];
+    return readlink(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf, bufsiz);
+}
+
+int amiga_chmod(const char *path, mode_t mode)
+{
+    char pbuf[1024];
+    return chmod(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
+}
+
+int amiga_utime(const char *filename, const struct utimbuf *times)
+{
+    char pbuf[1024];
+    return utime(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), times);
 }
