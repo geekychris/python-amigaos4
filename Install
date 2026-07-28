@@ -1,5 +1,5 @@
 ; AmigaOS 4 Installation Utility Script for Python 3.12.7
-; Used by SYS:System/Installer
+; Used by SYS:Utilities/Installation Utility
 
 (language "english")
 
