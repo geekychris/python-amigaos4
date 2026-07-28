@@ -127,19 +127,29 @@ def main():
     # Column info once — shared by both listbrowsers.
     cols = _amiga.lb_make_columns([("Name", 200), ("Size", 80)])
 
-    # DO NOT set GA_RelVerify on a listbrowser — that flag makes the
-    # gadget treat the click as a one-shot action and the selection
-    # deselects on release. Default (no RelVerify) is proper single-
-    # select with persistent highlight. Listbrowser still notifies
-    # via IDCMP_GADGETUP without it.
-    left_lb = _amiga.new_object_multi("listbrowser.gadget", [
-        ("GA_ID",                  ID_LB_LEFT),
+    # Listbrowser flags — the important one is LISTBROWSER_ShowSelected
+    # which draws the selected-row highlight. Default is FALSE — a
+    # click still SETS internal selection but there's no visible
+    # feedback and it looks like nothing happened. AutoFit expands
+    # to fit the pane width. ColumnTitles hides the column-title bar
+    # (we don't need it — columns are just Name / Size). MultiSelect
+    # off = single-select; on = ctrl-click adds to selection.
+    # (Raw ints because these are not yet in _amigamodule.c TAG_TABLE
+    # — add on the next rebuild for cleanliness.)
+    _LISTBROWSER_MultiSelect  = 0x85003006
+    _LISTBROWSER_AutoFit      = 0x85003010
+    _LISTBROWSER_ColumnTitles = 0x85003011
+    _LISTBROWSER_ShowSelected = 0x85003012
+    _lb_common = [
         ("LISTBROWSER_ColumnInfo", cols),
-    ])
-    right_lb = _amiga.new_object_multi("listbrowser.gadget", [
-        ("GA_ID",                  ID_LB_RIGHT),
-        ("LISTBROWSER_ColumnInfo", cols),
-    ])
+        (_LISTBROWSER_AutoFit,      True),
+        (_LISTBROWSER_ShowSelected, True),
+        (_LISTBROWSER_ColumnTitles, False),
+    ]
+    left_lb  = _amiga.new_object_multi("listbrowser.gadget",
+                                        [("GA_ID", ID_LB_LEFT)]  + _lb_common)
+    right_lb = _amiga.new_object_multi("listbrowser.gadget",
+                                        [("GA_ID", ID_LB_RIGHT)] + _lb_common)
 
     _refresh_lb(panes["left"],  left_lb,  left_list_slot)
     _refresh_lb(panes["right"], right_lb, right_list_slot)
