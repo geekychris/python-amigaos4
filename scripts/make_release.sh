@@ -78,7 +78,19 @@ rm -rf "$SYS_DIR/lib/sqlite3/test"
 find "$SYS_DIR/lib" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find "$SYS_DIR/lib" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# 5. Copy Amiga Bindings
+# 5. Pre-install pip into site-packages and create C/pip3 launcher
+echo "-> Pre-installing pip into System/python3/lib/site-packages..."
+mkdir -p "$SYS_DIR/lib/site-packages"
+python3 -c "import zipfile; zipfile.ZipFile('$STDLIB_SRC/ensurepip/_bundled/pip-24.2-py3-none-any.whl').extractall('$SYS_DIR/lib/site-packages')"
+
+echo "-> Creating C/pip3 launcher script..."
+cat << 'EOF' > "$STAGE_DIR/C/pip3"
+.key ARGS/F
+python3 -m pip <ARGS>
+EOF
+chmod +x "$STAGE_DIR/C/pip3"
+
+# 6. Copy Amiga Bindings
 echo "-> Copying amiga_bindings to System/python3/amiga_bindings..."
 mkdir -p "$SYS_DIR/amiga_bindings"
 cp -r "$REPO/amiga_bindings"/* "$SYS_DIR/amiga_bindings/"
