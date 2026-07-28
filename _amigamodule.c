@@ -50,6 +50,14 @@ struct GraphicsIFace   *IGraphics     = NULL;
 struct Library         *RexxSysBase   = NULL;
 struct RexxSysIFace    *IRexxSys      = NULL;
 
+/* ListBrowser class library is a BOOPSI class — open with OpenClass,
+ * not OpenLibrary. proto/listbrowser.h declares ListBrowserBase as
+ * struct Library * and ListBrowserClass as Class * (aka IClass *);
+ * match those types or you get "conflicting types" errors. */
+struct Library         *ListBrowserBase = NULL;
+Class                  *ListBrowserClass = NULL;
+struct ListBrowserIFace *IListBrowser  = NULL;
+
 
 /* --------------------------------------------------------------------- */
 /* Exec                                                                   */
@@ -1212,6 +1220,7 @@ py_menu_pick_decode(PyObject *self, PyObject *args)
 #include <gadgets/integer.h>
 #include <gadgets/layout.h>
 #include <gadgets/listbrowser.h>
+#include <proto/listbrowser.h>
 #include <gadgets/string.h>
 #include <gadgets/checkbox.h>
 
@@ -1278,6 +1287,12 @@ static const TagEntry TAG_TABLE[] = {
     {"LAYOUT_BevelStyle",   LAYOUT_BevelStyle},
     {"LAYOUT_Label",        LAYOUT_Label},
     {"LAYOUT_WeightBar",    LAYOUT_WeightBar},
+    {"LAYOUT_DeferLayout",  LAYOUT_DeferLayout},
+    {"LAYOUT_FixedHoriz",   LAYOUT_FixedHoriz},
+    {"LAYOUT_FixedVert",    LAYOUT_FixedVert},
+    {"LAYOUT_ShrinkWrap",   LAYOUT_ShrinkWrap},
+    {"LAYOUT_EvenSize",     LAYOUT_EvenSize},
+    {"LAYOUT_InnerSpacing", LAYOUT_InnerSpacing},
     /* button.gadget */
     {"BUTTON_AutoButton",   BUTTON_AutoButton},
     /* string.gadget */
@@ -1350,7 +1365,10 @@ build_tag_list(PyObject *dict, struct TagItem **out_tags)
         if (PyBool_Check(val)) {
             v = (val == Py_True) ? 1 : 0;
         } else if (PyLong_Check(val)) {
-            v = PyLong_AsUnsignedLong(val);
+            /* AsUnsignedLongMask does two's-complement wrap on
+             * negatives — vital for tags where -1 idiomatically
+             * means "no limit" (WA_MaxWidth/Height, etc). */
+            v = PyLong_AsUnsignedLongMask(val);
         } else if (PyUnicode_Check(val)) {
             /* strdup — leaked. Caller responsibility to keep the
              * source Python string alive OR to accept the leak for
@@ -1511,7 +1529,10 @@ py_new_object_multi(PyObject *self, PyObject *args)
         } else if (PyBool_Check(val)) {
             v = (val == Py_True) ? 1 : 0;
         } else if (PyLong_Check(val)) {
-            v = PyLong_AsUnsignedLong(val);
+            /* AsUnsignedLongMask does two's-complement wrap on
+             * negatives — vital for tags where -1 idiomatically
+             * means "no limit" (WA_MaxWidth/Height, etc). */
+            v = PyLong_AsUnsignedLongMask(val);
         } else if (PyUnicode_Check(val)) {
             v = (unsigned long)(uintptr_t)dup_str(PyUnicode_AsUTF8(val));
         } else {
@@ -1544,6 +1565,137 @@ py_dispose_object(PyObject *self, PyObject *args)
     Object *obj = (Object *)(uintptr_t)h;
     if (obj) DisposeObject(obj);
     Py_RETURN_NONE;
+}
+
+
+/* ---------------------------------------------------------------- */
+/* listbrowser.gadget row helpers                                    */
+/* ---------------------------------------------------------------- */
+/* listbrowser wants a struct List of Nodes it owns, one per row.
+ * Each Node holds N columns' worth of text (or images/integers).
+ *
+ * Python-friendly API:
+ *   list_h = _amiga.lb_make_list([["hello.txt", "1234"], ...])
+ *   lb = _amiga.new_object_multi("listbrowser.gadget", [
+ *       ("LISTBROWSER_Labels", list_h),
+ *       ...
+ *   ])
+ *
+ * When the listbrowser is disposed it does NOT free the list; use
+ * _amiga.lb_free_list(list_h) after DisposeObject on the parent.
+ * (Or leak — process cleanup handles it if only opened once.) */
+
+static PyObject *
+py_lb_make_list(PyObject *self, PyObject *args)
+{
+    PyObject *rows;
+    if (!PyArg_ParseTuple(args, "O", &rows)) return NULL;
+    if (!PyList_Check(rows) && !PyTuple_Check(rows)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "lb_make_list: arg must be list of list-of-str");
+        return NULL;
+    }
+    struct List *list = AllocSysObjectTags(ASOT_LIST, TAG_END);
+    if (!list) { PyErr_NoMemory(); return NULL; }
+
+    Py_ssize_t n_rows = PySequence_Length(rows);
+    for (Py_ssize_t i = 0; i < n_rows; i++) {
+        PyObject *row = PySequence_GetItem(rows, i);  /* new ref */
+        if (!row || (!PyList_Check(row) && !PyTuple_Check(row))) {
+            Py_XDECREF(row);
+            PyErr_Format(PyExc_TypeError,
+                         "lb_make_list row %zd: must be list of str", i);
+            /* leak nodes we've allocated so far — caller crash path */
+            FreeSysObject(ASOT_LIST, list);
+            return NULL;
+        }
+        Py_ssize_t n_cols = PySequence_Length(row);
+        struct Node *node = AllocListBrowserNode(
+            (UWORD)n_cols, TAG_END);
+        if (!node) {
+            Py_DECREF(row);
+            PyErr_NoMemory();
+            FreeSysObject(ASOT_LIST, list);
+            return NULL;
+        }
+        /* Fill each column with text. Need to set LBNA_Column,
+         * LBNA_ColumnJustification (optional), LBNCA_Text per col. */
+        for (Py_ssize_t c = 0; c < n_cols; c++) {
+            PyObject *cell = PySequence_GetItem(row, c);
+            const char *text = "";
+            if (cell && PyUnicode_Check(cell)) {
+                text = PyUnicode_AsUTF8(cell);
+            }
+            /* AllocLBNode returned a Node with N column-info slots.
+             * Set text via SetListBrowserNodeAttrs with LBNA_Column
+             * to select which column. */
+            SetListBrowserNodeAttrs(node,
+                LBNA_Column,       (uint32)c,
+                LBNCA_Text,        dup_str(text),
+                LBNCA_CopyText,    FALSE,   /* we own the string */
+                TAG_END);
+            Py_XDECREF(cell);
+        }
+        AddTail(list, node);
+        Py_DECREF(row);
+    }
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)list);
+}
+
+
+static PyObject *
+py_lb_free_list(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    if (!PyArg_ParseTuple(args, "k", &h)) return NULL;
+    struct List *list = (struct List *)(uintptr_t)h;
+    if (!list) Py_RETURN_NONE;
+    /* Walk the list, free each Node via FreeListBrowserNode, then
+     * dispose the list itself. */
+    struct Node *node;
+    while ((node = RemHead(list)) != NULL) {
+        FreeListBrowserNode(node);
+    }
+    FreeSysObject(ASOT_LIST, list);
+    Py_RETURN_NONE;
+}
+
+
+/* Column-info list — parallel structure to a row list, but describes
+ * heading/width/flags. Use as LISTBROWSER_ColumnInfo value. Simplest
+ * form takes (heading_string, weight) pairs. */
+static PyObject *
+py_lb_make_columns(PyObject *self, PyObject *args)
+{
+    PyObject *cols;
+    if (!PyArg_ParseTuple(args, "O", &cols)) return NULL;
+    if (!PyList_Check(cols) && !PyTuple_Check(cols)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "lb_make_columns: arg must be list of (title,weight)");
+        return NULL;
+    }
+    Py_ssize_t n = PySequence_Length(cols);
+    struct ColumnInfo *ci = AllocVec(sizeof(struct ColumnInfo) * (n + 1),
+                                       MEMF_ANY | MEMF_CLEAR);
+    if (!ci) { PyErr_NoMemory(); return NULL; }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *pair = PySequence_GetItem(cols, i);   /* new ref */
+        const char *title = "";
+        long weight = 100;
+        if (pair && (PyTuple_Check(pair) || PyList_Check(pair))
+                 && PySequence_Length(pair) >= 2) {
+            PyObject *t = PySequence_GetItem(pair, 0);
+            PyObject *w = PySequence_GetItem(pair, 1);
+            if (t && PyUnicode_Check(t)) title = PyUnicode_AsUTF8(t);
+            if (w && PyLong_Check(w))    weight = PyLong_AsLong(w);
+            Py_XDECREF(t); Py_XDECREF(w);
+        }
+        ci[i].ci_Width       = (UWORD)weight;
+        ci[i].ci_Title       = dup_str(title);
+        Py_XDECREF(pair);
+    }
+    ci[n].ci_Width = -1;   /* sentinel */
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)ci);
 }
 
 static PyObject *
@@ -1970,6 +2122,16 @@ static PyMethodDef amiga_methods[] = {
     {"do_method",         py_do_method,         METH_VARARGS,
         "do_method(handle, method_id, *args) -> int. Wraps IDoMethod."},
 
+    /* listbrowser.gadget row helpers */
+    {"lb_make_list",      py_lb_make_list,      METH_VARARGS,
+        "lb_make_list([[str, str, ...], ...]) -> handle. Build a struct "
+        "List of listbrowser rows suitable for LISTBROWSER_Labels."},
+    {"lb_free_list",      py_lb_free_list,      METH_VARARGS,
+        "lb_free_list(handle) — free the list built by lb_make_list."},
+    {"lb_make_columns",   py_lb_make_columns,   METH_VARARGS,
+        "lb_make_columns([(title, weight), ...]) -> handle. Column info "
+        "for LISTBROWSER_ColumnInfo."},
+
     /* ARexx — send commands to remote ports + drive the REXX interpreter */
     {"rexx_send",         py_rexx_send,         METH_VARARGS,
         "rexx_send(port, command) -> result_str — send RXCOMM to an ARexx port."},
@@ -2044,6 +2206,22 @@ PyInit__amiga(void)
             }
         }
     }
+    /* listbrowser.gadget class + interface — needed for
+     * AllocListBrowserNode, SetListBrowserNodeAttrs, FreeListBrowserNode
+     * (see py_lb_make_list etc). BOOPSI classes open with OpenClass
+     * (not OpenLibrary); the ClassLibrary struct returned is
+     * Library-derived so GetInterface works on it. */
+    if (!ListBrowserBase && IIntuition) {
+        /* Plain name; __USE_INLINE__ expands to IIntuition->OpenClass.
+         * OpenClass returns struct ClassLibrary * but proto declares
+         * ListBrowserBase as struct Library *; cast to satisfy both. */
+        ListBrowserBase = (struct Library *)OpenClass(
+            "gadgets/listbrowser.gadget", 44, &ListBrowserClass);
+        if (ListBrowserBase) {
+            IListBrowser = (struct ListBrowserIFace *)
+                GetInterface(ListBrowserBase, "main", 1, NULL);
+        }
+    }
 
     /* Expose common MEMF_ constants so scripts don't need to hardcode. */
     PyModule_AddIntConstant(m, "MEMF_ANY",     MEMF_ANY);
@@ -2093,6 +2271,30 @@ PyInit__amiga(void)
     PyModule_AddIntConstant(m, "WMHI_VANILLAKEY",    WMHI_VANILLAKEY);
     PyModule_AddIntConstant(m, "WMHI_NEWSIZE",       WMHI_NEWSIZE);
     PyModule_AddIntConstant(m, "WMHI_INTUITICK",     WMHI_INTUITICK);
+
+    /* WPOS_* — window.class WINDOW_Position values. Passing the
+     * wrong constant here (e.g. 4 = CENTERWINDOW without a partner
+     * window) silently fails WM_OPEN with 0. */
+    PyModule_AddIntConstant(m, "WPOS_CENTERSCREEN",  WPOS_CENTERSCREEN);
+    PyModule_AddIntConstant(m, "WPOS_CENTERMOUSE",   WPOS_CENTERMOUSE);
+    PyModule_AddIntConstant(m, "WPOS_TOPLEFT",       WPOS_TOPLEFT);
+    PyModule_AddIntConstant(m, "WPOS_CENTERWINDOW",  WPOS_CENTERWINDOW);
+    PyModule_AddIntConstant(m, "WPOS_FULLSCREEN",    WPOS_FULLSCREEN);
+
+    /* WFLG_* — Intuition WA_Flags bits. */
+    PyModule_AddIntConstant(m, "WFLG_SIZEGADGET",    WFLG_SIZEGADGET);
+    PyModule_AddIntConstant(m, "WFLG_DRAGBAR",       WFLG_DRAGBAR);
+    PyModule_AddIntConstant(m, "WFLG_DEPTHGADGET",   WFLG_DEPTHGADGET);
+    PyModule_AddIntConstant(m, "WFLG_CLOSEGADGET",   WFLG_CLOSEGADGET);
+    PyModule_AddIntConstant(m, "WFLG_SIMPLE_REFRESH", WFLG_SIMPLE_REFRESH);
+    PyModule_AddIntConstant(m, "WFLG_SMART_REFRESH", WFLG_SMART_REFRESH);
+    PyModule_AddIntConstant(m, "WFLG_ACTIVATE",      WFLG_ACTIVATE);
+    PyModule_AddIntConstant(m, "WFLG_BORDERLESS",    WFLG_BORDERLESS);
+    PyModule_AddIntConstant(m, "WFLG_BACKDROP",      WFLG_BACKDROP);
+
+    /* LAYOUT_ORIENT_* — layout.gadget LAYOUT_Orientation values. */
+    PyModule_AddIntConstant(m, "LAYOUT_ORIENT_HORIZ", LAYOUT_ORIENT_HORIZ);
+    PyModule_AddIntConstant(m, "LAYOUT_ORIENT_VERT",  LAYOUT_ORIENT_VERT);
 
     return m;
 }

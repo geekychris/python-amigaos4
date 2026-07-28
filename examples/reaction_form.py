@@ -81,15 +81,15 @@ def try_reaction():
         })
 
         button_row = _amiga.new_object_multi("layout.gadget", [
-            ("LAYOUT_Orientation", 0),         # LAYOUT_ORIENT_HORIZ
+            ("LAYOUT_Orientation", _amiga.LAYOUT_ORIENT_HORIZ),
             ("LAYOUT_AddChild", ok_btn),
             ("LAYOUT_AddChild", cancel_btn),
         ])
         root = _amiga.new_object_multi("layout.gadget", [
-            ("LAYOUT_Orientation", 1),         # LAYOUT_ORIENT_VERT
-            ("LAYOUT_SpaceOuter", True),
-            ("LAYOUT_SpaceInner", True),
-            (0x8500701a,           True),      # LAYOUT_DeferLayout
+            ("LAYOUT_Orientation",  _amiga.LAYOUT_ORIENT_VERT),
+            ("LAYOUT_SpaceOuter",   True),
+            ("LAYOUT_SpaceInner",   True),
+            ("LAYOUT_DeferLayout",  True),
             ("LAYOUT_AddChild", name),
             ("LAYOUT_AddChild", age),
             ("LAYOUT_AddChild", email),
@@ -104,7 +104,7 @@ def try_reaction():
             ("WA_DragBar",     True),
             ("WA_CloseGadget", True),
             ("WA_SizeGadget",  True),
-            ("WINDOW_Position", 2),   # WPOS_CENTERMOUSE
+            ("WINDOW_Position", _amiga.WPOS_CENTERMOUSE),
             ("WINDOW_Layout",  root),
         ])
         _log(f"  win={hex(win)}")
