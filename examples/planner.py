@@ -40,7 +40,7 @@ HAVE_DIALOG = hasattr(_amiga, "open_dialog")
 # Storage
 # ---------------------------------------------------------------------------
 
-DB_DIR = "DH1:Documents/Planner"
+DB_DIR = "DH1:Documents/Planner" if os.path.exists("DH1:") else "SYS:System/python3/Documents/Planner"
 DB_PATH = f"{DB_DIR}/planner.db"
 
 

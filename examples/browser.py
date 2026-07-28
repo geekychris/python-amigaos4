@@ -154,7 +154,7 @@ def _fetch_https(url, timeout=15):
     Python's _ssl module can't complete TLS handshakes over its own
     _socket-owned fds on OS4 (task #94 fd interop). amiga.https packages
     the working workaround: write request to T:, pipe through openssl,
-    read response. Requires AmiSSL installed + DH1:openssl deployed.
+    read response. Requires AmiSSL installed + openssl CLI deployed.
     """
     from amiga import https as ah
     status, headers, body = ah.get(url, timeout=timeout)
@@ -176,7 +176,7 @@ def fetch(url, timeout=15):
             return "text/plain", (
                 f"HTTPS unavailable: {e}\n\n"
                 f"Install AmiSSL + openssl CLI, then deploy "
-                f"amiga_bindings/amiga/https/ to DH1:lib/amiga/https/ "
+                f"amiga_bindings/amiga/https/ to SYS:System/python3/amiga_bindings/amiga/https/ "
                 f"(or python3:amiga_bindings/amiga/https/).".encode())
         except Exception as e:
             return "text/plain", (

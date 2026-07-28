@@ -314,7 +314,7 @@ def check_ssl(args) -> dict:
     # a positional arg by openssl and breaks the invocation. Just accept
     # that stderr goes to the console during this check.
     try:
-        rc = os.system("DH1:openssl version >T:_ssl_ver")
+        rc = os.system("openssl version >T:_ssl_ver")
         with open("T:_ssl_ver", "rb") as f:
             ver_out = f.read().decode("iso-8859-1", errors="replace").strip()
         try: os.remove("T:_ssl_ver")
