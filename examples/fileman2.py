@@ -90,8 +90,10 @@ ID_LB_LEFT     = 10
 ID_LB_RIGHT    = 11
 ID_BTN_SET     = 100
 ID_BTN_COPY    = 101
+ID_BTN_DELETE  = 105
 ID_BTN_REFRESH = 102
 ID_BTN_MKB     = 103
+ID_BTN_CONFIG  = 106
 ID_BTN_QUIT    = 104
 
 
@@ -99,8 +101,16 @@ ID_BTN_QUIT    = 104
 
 def _rows_from_pane(pane):
     """Convert a Pane's entries into listbrowser rows: (name, size|<DIR>)."""
+    try:
+        entries = pane.entries
+        print(f"  _rows_from_pane: pane.path={pane.path} "
+              f"nentries={len(entries)}", flush=True)
+    except Exception as ex:
+        print(f"  _rows_from_pane: pane.entries FAILED "
+              f"{type(ex).__name__}: {ex}", flush=True)
+        return []
     rows = []
-    for name, is_dir, size, _mtime in pane.entries:
+    for name, is_dir, size, _mtime in entries:
         kind = "<DIR>" if is_dir else str(size)
         rows.append([name, kind])
     return rows
@@ -112,18 +122,27 @@ def _refresh_lb(pane, lb_handle, list_slot, win_handle=0):
     win_handle is passed to set_attrs so the listbrowser knows which
     window to redraw itself in — 0 works pre-open, real handle after
     WM_OPEN."""
+    print(f"  _refresh_lb: pane.path={pane.path} lb=0x{lb_handle:x} "
+          f"win=0x{win_handle:x} old_list={list_slot[0]}", flush=True)
     rows = _rows_from_pane(pane)
+    print(f"  _refresh_lb: nrows={len(rows)} first={rows[0] if rows else None}",
+          flush=True)
     new_list = _amiga.lb_make_list(rows)
+    print(f"  _refresh_lb: new_list={new_list}", flush=True)
     # Detach old list before freeing to avoid a redraw on freed nodes.
     _amiga.set_attrs(lb_handle, {"LISTBROWSER_Labels": 0}, win_handle)
+    print(f"  _refresh_lb: detached old labels", flush=True)
     if list_slot[0]:
         try:
             _amiga.lb_free_list(list_slot[0])
-        except Exception:
-            pass
+            print(f"  _refresh_lb: freed old list", flush=True)
+        except Exception as ex:
+            print(f"  _refresh_lb: free failed {type(ex).__name__}: {ex}",
+                  flush=True)
     list_slot[0] = new_list
     _amiga.set_attrs(lb_handle, {"LISTBROWSER_Labels": new_list},
                     win_handle)
+    print(f"  _refresh_lb: attached new labels — done", flush=True)
 
 
 # ---------------------------------------------------------------- dialogs
@@ -144,6 +163,71 @@ def _prompt(title, label, default="", maxlen=200):
     return r.get(label, default)
 
 
+def _multi_prompt(title, fields, ok="OK", cancel="Cancel"):
+    """Show a multi-field dialog. `fields` is a list of
+    (label, default, maxlen) tuples. Returns dict of label->value
+    on OK, None on Cancel."""
+    if not hasattr(_amiga, "open_dialog"):
+        return None
+    h = _amiga.open_dialog(title=title, fields=fields,
+                            ok_label=ok, cancel_label=cancel,
+                            left=180, top=100)
+    try:
+        return _amiga.run_dialog(h)
+    finally:
+        _amiga.close_dialog(h)
+
+
+# ---------------------------------------------------------------- config
+# S3 config persistence. Stores to ENVARC: (survives reboot) and ENV:
+# (immediate; picked up by any new subprocess or by re-reading os.environ).
+# Format is one KEY=VALUE per line — compatible with `getenv KEY` and
+# the s3-env-local launcher script (which does `setenv KEY VALUE`).
+
+S3_CONFIG_KEYS = ("S3_ENDPOINT", "S3_ACCESS", "S3_SECRET", "S3_INSECURE",
+                  "S3_TIME_SKEW")
+
+# Multi-profile store. One JSON file with {name: {...S3_ vars...}}.
+# ENVARC: survives reboot, ENV: is a session copy the s3 CLI shells see.
+S3_PROFILES_FILE = "ENVARC:s3-profiles.json"
+
+
+def _profiles_load():
+    """Read the profiles file; return dict {name: {k: v}}.
+    Empty dict if the file doesn't exist yet."""
+    import json
+    try:
+        with open(S3_PROFILES_FILE, "r") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+    return {}
+
+
+def _profiles_save(profiles):
+    """Persist the full profiles dict."""
+    import json
+    with open(S3_PROFILES_FILE, "w") as f:
+        json.dump(profiles, f, indent=2)
+
+
+def _s3_config_load():
+    """Current env values (the active profile)."""
+    return {k: os.environ.get(k, "") for k in S3_CONFIG_KEYS}
+
+
+def _s3_config_activate(cfg):
+    """Push a profile's values into ENV: + ENVARC: so the CLI and next
+    boot see it. OS4 setenv writes to ENV:; we copy to ENVARC: too."""
+    for k in S3_CONFIG_KEYS:
+        v = str(cfg.get(k, "")).replace('"', '\\"')
+        os.environ[k] = str(cfg.get(k, ""))
+        os.system(f'setenv {k} "{v}"')
+        os.system(f'copy ENV:{k} ENVARC:{k} QUIET')
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -162,8 +246,14 @@ def main():
     left_list_slot  = [None]
     right_list_slot = [None]
 
-    # Column info once — shared by both listbrowsers.
-    cols = _amiga.lb_make_columns([("Name", 200), ("Size", 80)])
+    # Column info — SEPARATE array per listbrowser. Sharing one
+    # ColumnInfo pointer across two listbrowsers means both mutate the
+    # same widths (via AutoFit / drag / etc) and columns end up in
+    # inconsistent states.
+    # CIF_WEIGHTED is the default (flags=0). Values are RELATIVE
+    # weights, not pixel widths. Keep them small.
+    cols_left  = _amiga.lb_make_columns([("Name", 4), ("Size", 1)])
+    cols_right = _amiga.lb_make_columns([("Name", 4), ("Size", 1)])
 
     # Listbrowser flags — the important one is LISTBROWSER_ShowSelected
     # which draws the selected-row highlight. Default is FALSE — a
@@ -178,19 +268,41 @@ def main():
     _LISTBROWSER_AutoFit      = 0x85003010
     _LISTBROWSER_ColumnTitles = 0x85003011
     _LISTBROWSER_ShowSelected = 0x85003012
+    # GA_RelVerify is what tells the gadget to emit GADGETUP on mouse
+    # release — WITHOUT this, the listbrowser draws a selection highlight
+    # but never fires a click event that WM_HANDLEINPUT can dispatch.
+    # (SDK twocolumn.c sets this on every listbrowser.)
+    # Build initial label lists BEFORE creating the listbrowsers, and
+    # pass them via LISTBROWSER_Labels at creation. Confirmed by
+    # lb_minimal test: passing Labels only via later set_attrs leaves
+    # the click-dispatch subsystem uninitialised so GADGETUP never
+    # fires. Refreshing via set_attrs later still works fine.
+    left_list_slot[0]  = _amiga.lb_make_list(_rows_from_pane(panes["left"]))
+    right_list_slot[0] = _amiga.lb_make_list(_rows_from_pane(panes["right"]))
+
+    # AutoFit off — it re-sizes columns based on content, which makes
+    # the two panes render at different widths when their initial
+    # contents differ (screenshot: right pane clipped "hello" → "hell").
+    # Explicit weights + separate ColumnInfo per listbrowser keeps
+    # them consistent.
     _lb_common = [
-        ("LISTBROWSER_ColumnInfo", cols),
-        (_LISTBROWSER_AutoFit,      True),
+        ("GA_RelVerify",            True),
+        (_LISTBROWSER_AutoFit,      False),
         (_LISTBROWSER_ShowSelected, True),
         (_LISTBROWSER_ColumnTitles, False),
+        # MultiSelect on: user can Shift/Ctrl-click to add rows to
+        # the selection. Enumerate the full set with
+        # _amiga.lb_selected_indices(list_slot[0]).
+        (_LISTBROWSER_MultiSelect,  True),
     ]
     left_lb  = _amiga.new_object_multi("listbrowser.gadget",
-                                        [("GA_ID", ID_LB_LEFT)]  + _lb_common)
+        [("GA_ID", ID_LB_LEFT),
+         ("LISTBROWSER_ColumnInfo", cols_left),
+         ("LISTBROWSER_Labels", left_list_slot[0])] + _lb_common)
     right_lb = _amiga.new_object_multi("listbrowser.gadget",
-                                        [("GA_ID", ID_LB_RIGHT)] + _lb_common)
-
-    _refresh_lb(panes["left"],  left_lb,  left_list_slot)
-    _refresh_lb(panes["right"], right_lb, right_list_slot)
+        [("GA_ID", ID_LB_RIGHT),
+         ("LISTBROWSER_ColumnInfo", cols_right),
+         ("LISTBROWSER_Labels", right_list_slot[0])] + _lb_common)
 
     # Buttons — ID_BTN_* values feed the GADGETUP dispatch below.
     def _mkbtn(bid, label):
@@ -200,8 +312,10 @@ def main():
 
     b_set     = _mkbtn(ID_BTN_SET,     "Set")
     b_copy    = _mkbtn(ID_BTN_COPY,    "Copy")
+    b_delete  = _mkbtn(ID_BTN_DELETE,  "Delete")
     b_refresh = _mkbtn(ID_BTN_REFRESH, "Refresh")
     b_mkb     = _mkbtn(ID_BTN_MKB,     "MkBucket")
+    b_config  = _mkbtn(ID_BTN_CONFIG,  "S3 Config")
     b_quit    = _mkbtn(ID_BTN_QUIT,    "Quit")
 
     left_pane_layout = _amiga.new_object_multi("layout.gadget", [
@@ -230,8 +344,10 @@ def main():
         ("LAYOUT_EvenSize",    True),          # buttons same width
         ("LAYOUT_AddChild",    b_set),
         ("LAYOUT_AddChild",    b_copy),
+        ("LAYOUT_AddChild",    b_delete),
         ("LAYOUT_AddChild",    b_refresh),
         ("LAYOUT_AddChild",    b_mkb),
+        ("LAYOUT_AddChild",    b_config),
         ("LAYOUT_AddChild",    b_quit),
     ])
     # CHILD_WeightedHeight (raw 0x85007106 = LAYOUT_Dummy+0x100+6, from
@@ -252,10 +368,11 @@ def main():
         (_CHILD_WeightedHeight, 0),            # button_row: min height
     ])
 
-    idcmp = (_amiga.IDCMP_CLOSEWINDOW
-             | _amiga.IDCMP_GADGETUP
-             | _amiga.IDCMP_VANILLAKEY
-             | _amiga.IDCMP_NEWSIZE)
+    # NOTE: don't pass WA_IDCMP. window.class auto-derives the union of
+    # IDCMP flags every child gadget needs (listbrowser wants MOUSEBUTTONS
+    # / MOUSEMOVE / INTUITICKS for click+drag). Passing a fixed set here
+    # restricts the port and blocks gadget dispatch — SDK examples like
+    # twocolumn.c omit WA_IDCMP entirely.
     win = _amiga.new_object_multi("window.class", [
         ("WA_ScreenTitle",  "Python File Manager v2 (ReAction)"),
         ("WA_Title",        f"{panes['left'].path}  |  {panes['right'].path}"),
@@ -264,7 +381,6 @@ def main():
         ("WA_DragBar",      True),
         ("WA_CloseGadget",  True),
         ("WA_SizeGadget",   True),
-        ("WA_IDCMP",        idcmp),
         ("WA_InnerWidth",   700),
         ("WA_InnerHeight",  400),
         ("WA_MinWidth",     400),
@@ -319,25 +435,97 @@ def main():
             return pane.entries[idx]
         return None
 
+    class _Busy:
+        """Context manager that shows the busy pointer on the main
+        window for the duration of the block. Silently no-ops on old
+        pythons without _amiga.set_busy."""
+        def __enter__(self):
+            if hasattr(_amiga, "set_busy") and intuiwin:
+                try: _amiga.set_busy(intuiwin, True)
+                except Exception: pass
+            return self
+        def __exit__(self, *exc):
+            if hasattr(_amiga, "set_busy") and intuiwin:
+                try: _amiga.set_busy(intuiwin, False)
+                except Exception: pass
+
+    def _current_lb_slot():
+        """Return the (lb_handle, list_slot) for the focused pane."""
+        side = panes["focused"]
+        return ((left_lb, left_list_slot) if side == "left"
+                else (right_lb, right_list_slot))
+
+    def _selected_indices():
+        """All rows currently selected in the focused pane's
+        listbrowser. Empty list if none. Uses MultiSelect-aware
+        node walk; falls back to LISTBROWSER_Selected for the
+        no-multi-select case."""
+        _, slot = _current_lb_slot()
+        if not slot[0]:
+            return []
+        try:
+            idxs = _amiga.lb_selected_indices(slot[0])
+            if idxs:
+                return idxs
+        except Exception:
+            pass
+        # Fallback: single-select last-clicked
+        lb, _ = _current_lb_slot()
+        r = _get_selected_row_index(lb)
+        return [r] if r >= 0 else []
+
     def _do_copy():
         pane = _current_pane()
         dst  = _other_pane()
-        e = _selected_entry()
-        if not e:
+        idxs = _selected_indices()
+        if not idxs:
             print("copy: nothing selected", flush=True); return
-        name, is_dir, _sz, _mt = e
-        if is_dir or name == "..":
-            print(f"copy: skipping directory-like {name!r}", flush=True); return
-        try:
-            data = pane.read_file(name)
-            dst.write_file(name, data)
-            print(f"copy: {len(data)}b -> {dst.path}/{name}", flush=True)
-            _refresh_lb(dst,
-                         right_lb if panes["focused"] == "left" else left_lb,
-                         right_list_slot if panes["focused"] == "left" else left_list_slot,
-                         intuiwin)
-        except Exception as e:
-            print(f"copy failed: {type(e).__name__}: {e}", flush=True)
+        # Filter to files (skip dirs and '..'), report skipped
+        to_copy = []
+        for i in idxs:
+            if 0 <= i < len(pane.entries):
+                name, is_dir, _sz, _mt = pane.entries[i]
+                if is_dir or name == "..":
+                    print(f"copy: skipping {name!r} (dir)", flush=True)
+                else:
+                    to_copy.append(name)
+        if not to_copy:
+            print("copy: nothing to copy (all dirs)", flush=True); return
+        print(f"== _do_copy: {len(to_copy)} file(s) "
+              f"from {pane.path} to {dst.path}", flush=True)
+        dst_lb   = right_lb if panes["focused"] == "left" else left_lb
+        dst_slot = (right_list_slot
+                    if panes["focused"] == "left" else left_list_slot)
+        ok = 0
+        with _Busy():
+            for name in to_copy:
+                try:
+                    print(f"  copy: read {pane.path}/{name}", flush=True)
+                    data = pane.read_file(name)
+                    print(f"  copy: got {len(data)}b, writing to "
+                          f"{dst.path}/{name}", flush=True)
+                    dst.write_file(name, data)
+                    ok += 1
+                    print(f"  copy: wrote {name} OK", flush=True)
+                except Exception as e:
+                    import traceback
+                    print(f"  copy: FAILED {name} — "
+                          f"{type(e).__name__}: {e}\n"
+                          f"{traceback.format_exc()}", flush=True)
+            # Refresh dst ONCE at the end — otherwise we'd re-list S3 on
+            # every file which is both slow and hits the openssl-subprocess
+            # instability.
+            print(f"== _do_copy: {ok}/{len(to_copy)} succeeded, "
+                  f"refreshing dst", flush=True)
+            try:
+                dst.refresh()
+                _refresh_lb(dst, dst_lb, dst_slot, intuiwin)
+            except Exception as e:
+                import traceback
+                print(f"== _do_copy: dst refresh FAILED — "
+                      f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+                      flush=True)
+        print(f"== _do_copy: done ({ok} files copied)", flush=True)
 
     def _do_set_path():
         pane = _current_pane()
@@ -356,6 +544,101 @@ def main():
             print(f"set: {side} pane -> {new_pane.path}", flush=True)
         except Exception as e:
             print(f"set failed: {type(e).__name__}: {e}", flush=True)
+
+    def _do_delete():
+        try:
+            pane = _current_pane()
+            idxs = _selected_indices()
+            if not idxs:
+                print("delete: nothing selected", flush=True); return
+            to_del = []
+            for i in idxs:
+                if 0 <= i < len(pane.entries):
+                    name, is_dir, _, _ = pane.entries[i]
+                    if name == "..":
+                        continue
+                    if is_dir:
+                        print(f"delete: skipping {name!r} (dir)", flush=True)
+                        continue
+                    to_del.append(name)
+            if not to_del:
+                print("delete: nothing to delete (all dirs)", flush=True)
+                return
+            print(f"== _do_delete: {len(to_del)} file(s) from {pane.path}",
+                  flush=True)
+            ok = 0
+            with _Busy():
+                for name in to_del:
+                    try:
+                        print(f"  del: {pane.path}/{name}", flush=True)
+                        pane.delete_entry(name)
+                        ok += 1
+                    except Exception as ex:
+                        import traceback
+                        print(f"  del: FAILED {name} — "
+                              f"{type(ex).__name__}: {ex}\n"
+                              f"{traceback.format_exc()}", flush=True)
+                pane.refresh()
+                side = panes["focused"]
+                lb   = left_lb  if side == "left" else right_lb
+                slot = left_list_slot if side == "left" else right_list_slot
+                _refresh_lb(pane, lb, slot, intuiwin)
+            print(f"== _do_delete: {ok}/{len(to_del)} succeeded", flush=True)
+        except Exception as ex:
+            import traceback
+            print(f"== _do_delete: FAILED {type(ex).__name__}: {ex}\n"
+                  f"{traceback.format_exc()}", flush=True)
+
+    def _do_config():
+        try:
+            profiles = _profiles_load()
+            cur = _s3_config_load()
+            # Step 1: pick or create. Show existing names in the
+            # prompt so the user knows what's there. Typing an
+            # existing name loads that profile for edit; a new name
+            # creates a new profile pre-filled with current env.
+            names_list = ", ".join(sorted(profiles.keys())) or "(none yet)"
+            picked = _prompt(
+                "S3 profile picker",
+                f"Name (existing: {names_list})",
+                default="", maxlen=64)
+            if not picked:
+                print("config: cancelled at picker", flush=True); return
+            picked = picked.strip()
+            if not picked:
+                print("config: empty name", flush=True); return
+
+            defaults = profiles.get(picked, cur)
+            r = _multi_prompt(
+                f"S3 profile: {picked}",
+                [("Endpoint",    defaults.get("S3_ENDPOINT", ""),   80),
+                 ("Access Key",  defaults.get("S3_ACCESS", ""),     80),
+                 ("Secret Key",  defaults.get("S3_SECRET", ""),     80),
+                 ("Insecure TLS", defaults.get("S3_INSECURE", ""),   8),
+                 ("Time Skew",   defaults.get("S3_TIME_SKEW", ""), 12)],
+                ok="Save+Activate", cancel="Cancel")
+            if r is None:
+                print("config: cancelled at fields", flush=True); return
+            new = {
+                "S3_ENDPOINT":  r.get("Endpoint", ""),
+                "S3_ACCESS":    r.get("Access Key", ""),
+                "S3_SECRET":    r.get("Secret Key", ""),
+                "S3_INSECURE":  r.get("Insecure TLS", ""),
+                "S3_TIME_SKEW": r.get("Time Skew", ""),
+            }
+            profiles[picked] = new
+            _profiles_save(profiles)
+            _s3_config_activate(new)
+            print(f"== _do_config: saved+activated profile {picked!r} "
+                  f"(now {len(profiles)} profile(s))", flush=True)
+            # Drop cached S3 clients so next request picks up new creds.
+            for p in (panes["left"], panes["right"]):
+                if hasattr(p, "_client"):
+                    p._client = None
+        except Exception as ex:
+            import traceback
+            print(f"== _do_config: FAILED {type(ex).__name__}: {ex}\n"
+                  f"{traceback.format_exc()}", flush=True)
 
     def _do_mkbucket():
         pane = _current_pane()
@@ -383,11 +666,30 @@ def main():
             print(f"mkbucket failed: {type(e).__name__}: {e}", flush=True)
 
     def _do_refresh():
-        panes["left"].refresh()
-        panes["right"].refresh()
-        _refresh_lb(panes["left"],  left_lb,  left_list_slot,  intuiwin)
-        _refresh_lb(panes["right"], right_lb, right_list_slot, intuiwin)
-        print("refreshed", flush=True)
+        with _Busy():
+            print("== _do_refresh: LEFT pane.refresh()", flush=True)
+            try:
+                panes["left"].refresh()
+                print(f"   left.refresh ok, entries="
+                      f"{len(panes['left'].entries)}", flush=True)
+            except Exception as ex:
+                import traceback
+                print(f"   left.refresh FAILED {type(ex).__name__}: {ex}\n"
+                      f"{traceback.format_exc()}", flush=True)
+            print("== _do_refresh: RIGHT pane.refresh()", flush=True)
+            try:
+                panes["right"].refresh()
+                print(f"   right.refresh ok, entries="
+                      f"{len(panes['right'].entries)}", flush=True)
+            except Exception as ex:
+                import traceback
+                print(f"   right.refresh FAILED {type(ex).__name__}: {ex}\n"
+                      f"{traceback.format_exc()}", flush=True)
+            print("== _do_refresh: LEFT listbrowser rebuild", flush=True)
+            _refresh_lb(panes["left"],  left_lb,  left_list_slot,  intuiwin)
+            print("== _do_refresh: RIGHT listbrowser rebuild", flush=True)
+            _refresh_lb(panes["right"], right_lb, right_list_slot, intuiwin)
+            print("== _do_refresh: done", flush=True)
 
     # LISTBROWSER_RelEvent (GetAttr) returns the click type:
     #   LBRE_NORMAL = 1     — single click / selection change
@@ -415,12 +717,17 @@ def main():
         pane = _current_pane()
         row = _get_selected_row_index(lb)
         rel = _amiga.get_attr(lb, _LISTBROWSER_RelEvent)
-        if not (0 <= row < len(pane.entries)):
-            print(f"select: {side} (no row) rel={rel}", flush=True)
+        nent = len(pane.entries)
+        print(f"lb_click: side={side} lb=0x{lb:x} row={row} rel={rel} "
+              f"nentries={nent} path={pane.path}", flush=True)
+        if not (0 <= row < nent):
+            print(f"  → no valid row (row={row} vs nent={nent})", flush=True)
             return
         entry = pane.entries[row]
         name, is_dir, _sz, _mt = entry
         is_double = (rel == LBRE_DOUBLECLICK)
+        print(f"  → entry={name!r} is_dir={is_dir} is_double={is_double}",
+              flush=True)
 
         if is_double and is_dir:
             # Descend (or ascend on ".."). Can't use pane.enter_selected()
@@ -451,27 +758,55 @@ def main():
             print(f"select: {side}[{row}] = {name!r}"
                   f"{' (dir)' if is_dir else ''}", flush=True)
 
+    # WMHI codes (from SDK classes/window.h).
+    WMHI_CLASSMASK   = 0xFFFF0000
+    WMHI_GADGETMASK  = 0x0000FFFF
+    WMHI_CLOSEWINDOW = 1  << 16
+    WMHI_GADGETUP    = 2  << 16
+    WMHI_RAWKEY      = 11 << 16
+    WMHI_NEWSIZE     = 3  << 16   # WM_HANDLEINPUT reports NEWSIZE too
+    WMHI_VANILLAKEY  = 12 << 16
+
+    stop = False
     try:
-        while True:
-            ev = _amiga.wait_message(intuiwin, 5.0)
-            if ev is None:
-                continue
-            cls, code = ev["class"], ev["code"]
-            if cls == _amiga.IDCMP_CLOSEWINDOW:
-                break
-            if cls == _amiga.IDCMP_VANILLAKEY and code == 27:
-                break
-            if cls == _amiga.IDCMP_NEWSIZE:
-                # WM_RETHINK = 0x570006 (from classes/window.h).
-                _amiga.do_method(win, 0x570006)
-                continue
-            if cls == _amiga.IDCMP_GADGETUP:
-                if code == ID_BTN_SET:      _do_set_path()
-                elif code == ID_BTN_COPY:   _do_copy()
-                elif code == ID_BTN_REFRESH: _do_refresh()
-                elif code == ID_BTN_MKB:    _do_mkbucket()
-                elif code == ID_BTN_QUIT:   break
-                elif code in lb_by_id:      _handle_lb_click(code)
+        while not stop:
+            # window.class swallows all IDCMP into its internal queue.
+            # Drain via WM_HANDLEINPUT — returns None when empty. We
+            # loop until dry, then sleep briefly to yield CPU. Using
+            # time.sleep instead of Wait() because our wait_message
+            # would consume messages before WM_HANDLEINPUT can dispatch
+            # them (they're mutually exclusive drain APIs).
+            drained_any = False
+            while True:
+                r = _amiga.wm_handleinput(win)
+                if r is None:
+                    break
+                drained_any = True
+                result, code = r
+                cls = result & WMHI_CLASSMASK
+                gid = result & WMHI_GADGETMASK
+                print(f"wmhi: cls=0x{cls:08x} gid={gid} code={code}",
+                      flush=True)
+                if cls == WMHI_CLOSEWINDOW:
+                    stop = True
+                    break
+                if cls == WMHI_VANILLAKEY and code == 27:
+                    stop = True
+                    break
+                if cls == WMHI_NEWSIZE:
+                    _amiga.do_method(win, 0x570006)  # WM_RETHINK
+                    continue
+                if cls == WMHI_GADGETUP:
+                    if   gid == ID_BTN_SET:     _do_set_path()
+                    elif gid == ID_BTN_COPY:    _do_copy()
+                    elif gid == ID_BTN_DELETE:  _do_delete()
+                    elif gid == ID_BTN_REFRESH: _do_refresh()
+                    elif gid == ID_BTN_MKB:     _do_mkbucket()
+                    elif gid == ID_BTN_CONFIG:  _do_config()
+                    elif gid == ID_BTN_QUIT:    stop = True; break
+                    elif gid in lb_by_id:       _handle_lb_click(gid)
+            if not drained_any:
+                time.sleep(0.03)
     finally:
         _amiga.do_method(win, _amiga.WM_CLOSE)
         _amiga.dispose_object(win)

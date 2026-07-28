@@ -158,7 +158,8 @@ class S3Client:
 
     def __init__(self, endpoint: str, access_key: str, secret_key: str,
                  region: str = "us-east-1", secure: bool = True,
-                 insecure_tls: bool = False):
+                 insecure_tls: bool = False,
+                 time_skew_seconds: float | None = None):
         if not secure:
             raise ValueError("plain HTTP not supported (amiga.https is HTTPS-only)")
         self.endpoint = endpoint
@@ -166,6 +167,16 @@ class S3Client:
         self.secret_key = secret_key
         self.region = region
         self.insecure_tls = insecure_tls
+        # Correct for OS4 Python's time.time() being wrong (newlib treats
+        # Amiga wall clock as local instead of UTC, so time.time() is off
+        # by the TZ offset). SigV4 rejects >5 min skew. Provide the delta
+        # as `Amiga_time - real_UTC_time` (typically +14400 for EDT).
+        # Falls back to the S3_TIME_SKEW env var. See os4_clock_gotcha.md.
+        if time_skew_seconds is None:
+            import os
+            v = os.environ.get("S3_TIME_SKEW")
+            time_skew_seconds = float(v) if v else 0.0
+        self.time_skew = time_skew_seconds
 
     # ------------------------------------------------------------------ signing
 
@@ -177,7 +188,8 @@ class S3Client:
 
         Returns the header dict ready to hand to amiga.https.fetch().
         """
-        amz_date, date_stamp = _iso_now()
+        corrected = time.time() - self.time_skew if self.time_skew else None
+        amz_date, date_stamp = _iso_now(corrected)
         payload_hash = _sha256_hex(body)
 
         headers: dict[str, str] = {

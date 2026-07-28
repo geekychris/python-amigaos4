@@ -18,6 +18,12 @@
 
 execute DH1:s3cli/s3-env-local
 
+; Correct for the OS4 Python time-skew (newlib treats Amiga wall clock
+; as local, so time.time() is off by the TZ offset — SigV4 refuses
+; requests >5 min skewed). 14400 = 4h EDT correction. See
+; os4_clock_gotcha.md — permanent fix wants a python-os4 rebuild.
+setenv S3_TIME_SKEW 14400
+
 setenv FILEMAN2_LEFT  {LEFT}
 setenv FILEMAN2_RIGHT {RIGHT}
 

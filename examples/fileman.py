@@ -286,11 +286,22 @@ class S3Pane(BasePane):
 
     def refresh(self):
         bucket, prefix = _split_s3(self.path)
+        # Retry once on empty response — amiga.https shells out to
+        # openssl s_client each request, and back-to-back calls can
+        # transiently return empty output (subprocess race). One retry
+        # with a brief sleep is enough to catch the flaky case
+        # without doubling latency in the happy path.
+        import time as _t
         try:
             c = self._get_client()
             if not bucket:
                 # Bucket-list view: each bucket is a "directory"
                 bs = c.list_buckets()
+                if not bs:
+                    _t.sleep(0.5)
+                    bs = c.list_buckets()
+                    print(f"S3Pane: retry list_buckets → {len(bs)} entries",
+                          flush=True)
                 self.entries = [(".." , True, 0, 0)] if False else []
                 self.entries += [(b["name"], True, 0, 0) for b in bs]
                 self.list.items = [
@@ -301,6 +312,12 @@ class S3Pane(BasePane):
                 prefix_slash = (prefix + "/") if prefix else ""
                 objs = c.list_objects(bucket, prefix=prefix_slash,
                                        max_keys=1000)
+                if not objs:
+                    _t.sleep(0.5)
+                    objs = c.list_objects(bucket, prefix=prefix_slash,
+                                            max_keys=1000)
+                    print(f"S3Pane: retry list_objects → {len(objs)} entries",
+                          flush=True)
                 self.entries = [("..", True, 0, 0)]
                 # Collect sub-"folders" from key prefixes we see.
                 seen_folders: set[str] = set()
@@ -320,6 +337,10 @@ class S3Pane(BasePane):
             self.list.selected = 0 if self.entries else -1
             self.list.top = 0
         except Exception as e:
+            import traceback
+            print(f"S3Pane.refresh({self.path}) FAILED: "
+                  f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+                  flush=True)
             self.entries = []
             self.list.items = [f"<S3 error: {type(e).__name__}: {e}>"]
             self.list.selected = -1

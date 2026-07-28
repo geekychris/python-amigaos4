@@ -473,22 +473,35 @@ py_wait_message(PyObject *self, PyObject *args)
     ULONG win_sig = 1UL << port->mp_SigBit;
 
     if (timeout < 0) {
-        /* Block forever on the window signal.  Release GIL so other
-         * Python threads can run while we wait. */
+        /* Block on window signal OR CTRL_C — so `break N C` or
+         * amiga_kill_task can actually terminate a Python event
+         * loop that would otherwise wait forever on the port. */
+        ULONG got;
         Py_BEGIN_ALLOW_THREADS
-        Wait(win_sig);
+        got = Wait(win_sig | SIGBREAKF_CTRL_C);
         Py_END_ALLOW_THREADS
+        if (got & SIGBREAKF_CTRL_C) {
+            PyErr_SetInterrupt();
+            if (PyErr_CheckSignals()) return NULL;
+            PyErr_SetString(PyExc_KeyboardInterrupt, "CTRL_C");
+            return NULL;
+        }
     } else {
-        /* Poll every Delay(1) tick (20ms) until either a message
-         * arrives or the timeout expires.  IsMsgPortEmpty is a
-         * peek — doesn't consume. */
+        /* Bounded wait: poll port + check CTRL_C each tick. */
         int ticks = (int)(timeout * 50.0);
         if (ticks < 1) ticks = 1;
         Py_BEGIN_ALLOW_THREADS
         while (ticks-- > 0 && IsMsgPortEmpty(port)) {
+            if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) break;
             Delay(1);
         }
         Py_END_ALLOW_THREADS
+        if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) {
+            PyErr_SetInterrupt();
+            if (PyErr_CheckSignals()) return NULL;
+            PyErr_SetString(PyExc_KeyboardInterrupt, "CTRL_C");
+            return NULL;
+        }
     }
 
     /* Return the first pending message, if any. */
@@ -1329,11 +1342,16 @@ tag_lookup(PyObject *key)
     for (const TagEntry *t = TAG_TABLE; t->name; t++) {
         if (strcmp(t->name, name) == 0) return t->value;
     }
-    /* PyErr_Format doesn't accept %r for C strings — using %s so
+    /* PyErr_Format doesn't accept %r for C strings - using %s so
      * the actual missing tag name shows up instead of a bogus
-     * "invalid format string" SystemError. */
+     * "invalid format string" SystemError.
+     *
+     * Also: format string MUST be pure ASCII. PyUnicode_FromFormatV
+     * on OS4/newlib rejects non-ASCII bytes (e.g. em-dash) with a
+     * ValueError - which for a KeyError code path silently swallows
+     * the actual message. Use plain hyphens. */
     PyErr_Format(PyExc_KeyError,
-                 "unknown tag name '%s' — extend TAG_TABLE in _amigamodule.c",
+                 "unknown tag name '%s' - extend TAG_TABLE in _amigamodule.c",
                  name);
     return 0;
 }
@@ -1420,7 +1438,7 @@ py_open_class(PyObject *self, PyObject *args)
     struct ClassLibrary *base = OpenClass((STRPTR)name, version, &cls);
     if (!base || !cls) {
         PyErr_Format(PyExc_RuntimeError,
-                     "OpenClass(%s, v%lu+) failed — check the class "
+                     "OpenClass(%s, v%lu+) failed - check the class "
                      "library is installed (SYS:Classes/...)",
                      name, version);
         return NULL;
@@ -1643,6 +1661,35 @@ py_lb_make_list(PyObject *self, PyObject *args)
 }
 
 
+/* Walk a listbrowser Labels list and return a Python list of the
+ * indices of rows that are LBNA_Selected. Useful for MultiSelect
+ * listbrowsers where you can't recover the selection set from
+ * LISTBROWSER_Selected alone (that only holds the last-clicked
+ * index). Rows are numbered from 0 in the order they appear. */
+static PyObject *
+py_lb_selected_indices(PyObject *self, PyObject *args)
+{
+    unsigned long list_h;
+    if (!PyArg_ParseTuple(args, "k", &list_h)) return NULL;
+    struct List *list = (struct List *)(uintptr_t)list_h;
+    if (!list) Py_RETURN_NONE;
+    PyObject *result = PyList_New(0);
+    if (!result) return NULL;
+    long idx = 0;
+    for (struct Node *n = list->lh_Head; n->ln_Succ; n = n->ln_Succ) {
+        uint32 sel = 0;
+        GetListBrowserNodeAttrs(n, LBNA_Selected, &sel, TAG_END);
+        if (sel) {
+            PyObject *v = PyLong_FromLong(idx);
+            PyList_Append(result, v);
+            Py_DECREF(v);
+        }
+        idx++;
+    }
+    return result;
+}
+
+
 static PyObject *
 py_lb_free_list(PyObject *self, PyObject *args)
 {
@@ -1809,6 +1856,79 @@ py_do_method(PyObject *self, PyObject *args)
     }
     ULONG rc = IDoMethodA(obj, (Msg)msg);
     return PyLong_FromUnsignedLong(rc);
+}
+
+
+/* --------------------------------------------------------------------- */
+/* wm_handleinput — BOOPSI window.class event drain.                     */
+/*                                                                        */
+/* window.class routes gadget events (listbrowser row click, button      */
+/* release, etc.) through its own WM_HANDLEINPUT method rather than      */
+/* delivering IDCMP_GADGETUP directly to the UserPort.  So Python code   */
+/* using window.class MUST call this in a drain loop instead of         */
+/* wait_message + IDCMP class decoding.                                  */
+/*                                                                        */
+/* Idiomatic SDK pattern (twocolumn.c):                                  */
+/*     WaitPort(win->UserPort);                                          */
+/*     while ((rc = IDoMethod(win, WM_HANDLEINPUT, &code))) {           */
+/*         switch (rc & WMHI_CLASSMASK) { ... }                          */
+/*     }                                                                  */
+/*                                                                        */
+/* We do the equivalent — IDoMethodA with a msg that embeds a pointer   */
+/* to a local int16 code slot.  Returns (result, code) tuple, or None   */
+/* when the drain is complete (result == 0). */
+/* Toggle the busy pointer on a window. Standard OS4 Intuition:
+ * SetWindowPointer(win, WA_BusyPointer, TRUE, WA_PointerDelay, TRUE,
+ *                  TAG_END) — the delay is 0.25s so a fast op doesn't
+ * flicker. FALSE clears the pointer. */
+static PyObject *
+py_set_busy(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    int on;
+    if (!PyArg_ParseTuple(args, "kp", &h, &on)) return NULL;
+    struct Window *w = (struct Window *)(uintptr_t)h;
+    if (!w) Py_RETURN_NONE;
+    if (on) {
+        SetWindowPointer(w,
+            WA_BusyPointer, TRUE,
+            WA_PointerDelay, TRUE,
+            TAG_END);
+    } else {
+        SetWindowPointer(w,
+            WA_Pointer, NULL,
+            TAG_END);
+    }
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+py_wm_handleinput(PyObject *self, PyObject *args)
+{
+    unsigned long h;
+    if (!PyArg_ParseTuple(args, "k", &h)) return NULL;
+    Object *win = (Object *)(uintptr_t)h;
+    if (!win) {
+        PyErr_SetString(PyExc_ValueError, "null window object handle");
+        return NULL;
+    }
+    /* CTRL_C check before dispatch — so BREAK N C from the bridge
+     * (or amiga_kill_task) can actually terminate a Python event
+     * loop that's drain-looping on wm_handleinput+time.sleep.
+     * Consume the signal bit so we don't re-fire next call. */
+    if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) {
+        PyErr_SetString(PyExc_KeyboardInterrupt, "CTRL_C");
+        return NULL;
+    }
+    int16 code = 0;
+    /* struct wmHandle: { ULONG MethodID; int16 *wmh_Code; } */
+    unsigned long msg[2];
+    msg[0] = 0x570001UL;                        /* WM_HANDLEINPUT */
+    msg[1] = (unsigned long)(uintptr_t)&code;
+    ULONG rc = IDoMethodA(win, (Msg)msg);
+    if (rc == 0) Py_RETURN_NONE;
+    return Py_BuildValue("(kh)", (unsigned long)rc, (short)code);
 }
 
 
@@ -2119,6 +2239,10 @@ static PyMethodDef amiga_methods[] = {
         "set_attrs(handle, {tag: value}, window=0) — SetGadgetAttrsA if window given, else SetAttrsA."},
     {"get_attr",          py_get_attr,          METH_VARARGS,
         "get_attr(handle, tag) -> int. Wraps GetAttr."},
+    {"set_busy",          py_set_busy,          METH_VARARGS,
+     "set_busy(intuiwin, on_bool) — show/hide the busy pointer on the window."},
+    {"wm_handleinput",    py_wm_handleinput,    METH_VARARGS,
+     "wm_handleinput(win) — drain one window.class event; returns (result, code) or None."},
     {"do_method",         py_do_method,         METH_VARARGS,
         "do_method(handle, method_id, *args) -> int. Wraps IDoMethod."},
 
@@ -2126,6 +2250,8 @@ static PyMethodDef amiga_methods[] = {
     {"lb_make_list",      py_lb_make_list,      METH_VARARGS,
         "lb_make_list([[str, str, ...], ...]) -> handle. Build a struct "
         "List of listbrowser rows suitable for LISTBROWSER_Labels."},
+    {"lb_selected_indices", py_lb_selected_indices, METH_VARARGS,
+     "lb_selected_indices(list_handle) -> [i, j, ...] indices of LBNA_Selected rows."},
     {"lb_free_list",      py_lb_free_list,      METH_VARARGS,
         "lb_free_list(handle) — free the list built by lb_make_list."},
     {"lb_make_columns",   py_lb_make_columns,   METH_VARARGS,
