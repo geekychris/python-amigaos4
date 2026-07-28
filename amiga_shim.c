@@ -257,3 +257,21 @@ int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex)
     }
     return 0;
 }
+
+/* --- Constructor: Suppress AmigaDOS Volume Requesters --------------
+ * AmigaDOS pops up a GUI requester ("Please insert Volume X:") whenever
+ * a path contains an unknown volume name followed by a colon.
+ * Setting pr_WindowPtr = (APTR)-1 in the process structure suppresses
+ * all GUI dialogs so missing volume/path checks return clean ENOENT. */
+#include <proto/exec.h>
+#include <dos/dos.h>
+
+__attribute__((constructor)) static void amiga_suppress_requesters(void)
+{
+    if (IExec) {
+        struct Process *proc = (struct Process *)IExec->FindTask(NULL);
+        if (proc && proc->pr_Task.tc_Node.ln_Type == NT_PROCESS) {
+            proc->pr_WindowPtr = (APTR)-1;
+        }
+    }
+}
