@@ -12,8 +12,8 @@ Echo "Step 1: Installing python3 binary to C:..."
 If EXISTS C/python3
     Copy C/python3 C:python3 FORCE CLONE >NIL:
     If WARN
-        Echo "  -> Notice: C:python3 is in-use by a running process."
-        Echo "     Close running python processes to overwrite C:python3."
+        Echo "  -> Notice: C:python3 is locked by a running process."
+        Echo "     Stop running python processes to replace C:python3."
     Else
         Echo "  -> Installed C/python3 -> C:python3"
     EndIf
@@ -33,11 +33,16 @@ If NOT EXISTS SYS:System/python3
 EndIf
 
 If EXISTS System/python3
-    Copy System/python3 SYS:System/python3 ALL FORCE CLONE
-    Echo "  -> Installed files into SYS:System/python3"
+    Copy System/python3/#? SYS:System/python3/ ALL FORCE CLONE QUIET >NIL:
+    If WARN
+        Echo "  -> Notice: Some files in SYS:System/python3 are locked by a running Python task."
+        Echo "     Stop active Python tasks to fully update the library tree."
+    Else
+        Echo "  -> Installed files into SYS:System/python3"
+    EndIf
 Else
     If EXISTS lib
-        Copy ALL FORCE CLONE . SYS:System/python3
+        Copy #? SYS:System/python3/ ALL FORCE CLONE QUIET >NIL:
         Echo "  -> Installed files into SYS:System/python3"
     Else
         Echo "  -> Notice: System/python3 directory not found."
