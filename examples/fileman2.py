@@ -127,14 +127,17 @@ def main():
     # Column info once — shared by both listbrowsers.
     cols = _amiga.lb_make_columns([("Name", 200), ("Size", 80)])
 
+    # DO NOT set GA_RelVerify on a listbrowser — that flag makes the
+    # gadget treat the click as a one-shot action and the selection
+    # deselects on release. Default (no RelVerify) is proper single-
+    # select with persistent highlight. Listbrowser still notifies
+    # via IDCMP_GADGETUP without it.
     left_lb = _amiga.new_object_multi("listbrowser.gadget", [
         ("GA_ID",                  ID_LB_LEFT),
-        ("GA_RelVerify",           True),      # send GADGETUP on click
         ("LISTBROWSER_ColumnInfo", cols),
     ])
     right_lb = _amiga.new_object_multi("listbrowser.gadget", [
         ("GA_ID",                  ID_LB_RIGHT),
-        ("GA_RelVerify",           True),
         ("LISTBROWSER_ColumnInfo", cols),
     ])
 
@@ -338,23 +341,65 @@ def main():
         _refresh_lb(panes["right"], right_lb, right_list_slot, intuiwin)
         print("refreshed", flush=True)
 
+    # Double-click tracking per pane. Second click on the same row
+    # within DOUBLE_CLICK_S seconds counts as double-click → descend.
+    DOUBLE_CLICK_S = 0.6
+    last_click = {"left": (None, 0.0), "right": (None, 0.0)}
+
     def _handle_lb_click(gid):
-        """Listbrowser row-click — mark that pane as focused and
-        query which row is selected. Note: listbrowser fires
-        IDCMP_GADGETUP on release, and the row index is NOT in the
-        IntuiMessage's code field — we have to GetAttr
-        LISTBROWSER_Selected."""
+        """Listbrowser row-click — mark that pane as focused, query
+        which row is selected, and check for double-click.
+
+        Single-click → select + report; second click on same row
+        within DOUBLE_CLICK_S → descend if directory or move to parent
+        if ``..``. Row index isn't in the GADGETUP code field; must
+        GetAttr LISTBROWSER_Selected."""
         if gid not in lb_by_id:
             return
         side, lb, _slot = lb_by_id[gid]
         panes["focused"] = side
         pane = _current_pane()
         row = _get_selected_row_index(lb)
-        if 0 <= row < len(pane.entries):
-            e = pane.entries[row]
-            print(f"select: {side}[{row}] = {e[0]!r}", flush=True)
-        else:
+        if not (0 <= row < len(pane.entries)):
             print(f"select: {side} (no row)", flush=True)
+            return
+        entry = pane.entries[row]
+        name, is_dir, _sz, _mt = entry
+
+        now = time.time()
+        prev_row, prev_t = last_click[side]
+        is_double = (prev_row == row and (now - prev_t) < DOUBLE_CLICK_S)
+        last_click[side] = (row, now)
+
+        if is_double and is_dir:
+            # Descend (or ascend on ".."). Can't use pane.enter_selected()
+            # because it reads self.list.selected from the amiga.ui
+            # ListPanel — our ReAction listbrowser doesn't populate
+            # that. Set the path directly and refresh.
+            try:
+                if name == "..":
+                    pane.go_parent()
+                else:
+                    # Build the new path. For S3Pane, path is
+                    # s3://[bucket[/prefix]]. For LocalPane it's a
+                    # local path. Both handle "join name" the same way
+                    # via string concat, but S3 needs the s3:// prefix
+                    # preserved. Sync sync — sync the selection index
+                    # into the pane's ListPanel first, then call
+                    # enter_selected which uses that.
+                    pane.list.selected = row
+                    pane.enter_selected()
+                lb_h  = left_lb  if side == "left" else right_lb
+                slot  = left_list_slot if side == "left" else right_list_slot
+                _refresh_lb(pane, lb_h, slot, intuiwin)
+                last_click[side] = (None, 0.0)   # don't re-trigger
+                print(f"descend: {side} -> {pane.path}", flush=True)
+            except Exception as exc:
+                print(f"descend failed: {type(exc).__name__}: {exc}",
+                      flush=True)
+        else:
+            print(f"select: {side}[{row}] = {name!r}"
+                  f"{' (dir)' if is_dir else ''}", flush=True)
 
     try:
         while True:
