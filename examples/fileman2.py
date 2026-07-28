@@ -351,35 +351,38 @@ def main():
         _refresh_lb(panes["right"], right_lb, right_list_slot, intuiwin)
         print("refreshed", flush=True)
 
-    # Double-click tracking per pane. Second click on the same row
-    # within DOUBLE_CLICK_S seconds counts as double-click → descend.
-    DOUBLE_CLICK_S = 0.6
-    last_click = {"left": (None, 0.0), "right": (None, 0.0)}
+    # LISTBROWSER_RelEvent (GetAttr) returns the click type:
+    #   LBRE_NORMAL = 1     — single click / selection change
+    #   LBRE_DOUBLECLICK = 16
+    #   LBRE_HIDECHILDREN=2, LBRE_SHOWCHILDREN=4, etc. — hierarchy
+    # We only care about NORMAL vs DOUBLECLICK. This is more reliable
+    # than tracking time diffs ourselves — listbrowser has already
+    # decided the classification.
+    _LISTBROWSER_RelEvent = 0x85003025
+    LBRE_NORMAL      = 1
+    LBRE_DOUBLECLICK = 16
 
     def _handle_lb_click(gid):
         """Listbrowser row-click — mark that pane as focused, query
-        which row is selected, and check for double-click.
+        which row is selected, and check RelEvent for single vs
+        double-click.
 
-        Single-click → select + report; second click on same row
-        within DOUBLE_CLICK_S → descend if directory or move to parent
-        if ``..``. Row index isn't in the GADGETUP code field; must
-        GetAttr LISTBROWSER_Selected."""
+        Single-click → select + report; double-click on a directory
+        row → descend (or ascend on `..`). Row index isn't in the
+        GADGETUP code; must GetAttr LISTBROWSER_Selected."""
         if gid not in lb_by_id:
             return
         side, lb, _slot = lb_by_id[gid]
         panes["focused"] = side
         pane = _current_pane()
         row = _get_selected_row_index(lb)
+        rel = _amiga.get_attr(lb, _LISTBROWSER_RelEvent)
         if not (0 <= row < len(pane.entries)):
-            print(f"select: {side} (no row)", flush=True)
+            print(f"select: {side} (no row) rel={rel}", flush=True)
             return
         entry = pane.entries[row]
         name, is_dir, _sz, _mt = entry
-
-        now = time.time()
-        prev_row, prev_t = last_click[side]
-        is_double = (prev_row == row and (now - prev_t) < DOUBLE_CLICK_S)
-        last_click[side] = (row, now)
+        is_double = (rel == LBRE_DOUBLECLICK)
 
         if is_double and is_dir:
             # Descend (or ascend on ".."). Can't use pane.enter_selected()
@@ -402,7 +405,6 @@ def main():
                 lb_h  = left_lb  if side == "left" else right_lb
                 slot  = left_list_slot if side == "left" else right_list_slot
                 _refresh_lb(pane, lb_h, slot, intuiwin)
-                last_click[side] = (None, 0.0)   # don't re-trigger
                 print(f"descend: {side} -> {pane.path}", flush=True)
             except Exception as exc:
                 print(f"descend failed: {type(exc).__name__}: {exc}",

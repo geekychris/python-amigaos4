@@ -22,4 +22,5 @@ setenv FILEMAN2_LEFT  {LEFT}
 setenv FILEMAN2_RIGHT {RIGHT}
 
 echo "fileman2: launching (left={LEFT} right={RIGHT})"
-run DH1:python-os4 DH1:pytests/examples/fileman2.py
+echo "fileman2: log at RAM:fm2.log — 'type RAM:fm2.log' after actions"
+run >RAM:fm2.log DH1:python-os4 DH1:pytests/examples/fileman2.py
