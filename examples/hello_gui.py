@@ -9,7 +9,9 @@ The EasyRequest at the top DOES pop a real Intuition requester today —
 it shells out to `RequestChoice`, a stock OS4 CLI tool.
 """
 import sys, os
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from amiga import intuition as intu
 from amiga.exec import PutMsg   # for feeding synthetic events in sim mode

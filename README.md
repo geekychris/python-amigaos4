@@ -69,7 +69,7 @@ docker run --rm -v "$(pwd):/work" amiga-python-build:local \
 Prerequisites on the target:
 
 ```
-DH1:python-os4         # the interpreter (rename python-stripped to this)
+python3         # the interpreter (rename python-stripped to this)
 DH1:lib/               # the Python stdlib — see Deploy below
 ```
 
@@ -90,8 +90,8 @@ Set the Python search path **once per boot** (or add to
 `S:User-Startup` — the installer does this for AmiSSL):
 
 ```
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
 ```
 
 Without those, Python can't find `encodings` and dies silently
@@ -119,23 +119,23 @@ transfer commands to paste into a Claude Code / MCP session:
 Sanity check:
 
 ```
-DH1:python-os4 -V
+python3 -V
 Python 3.12.7
 ```
 
 Run a script:
 
 ```
-DH1:python-os4 RAM:tiny.py
-DH1:python-os4 DH1:pytests/examples/hello_dos.py
+python3 RAM:tiny.py
+python3 python3:examples/hello_dos.py
 ```
 
 Run a windowed app:
 
 ```
-DH1:python-os4 DH1:pytests/examples/clock.py       # wall clock in an Intuition window
-DH1:python-os4 DH1:pytests/examples/planner.py     # calendar + SQLite notes
-DH1:python-os4 DH1:pytests/examples/snake.py       # freegames snake via amiga.turtle
+python3 python3:examples/clock.py       # wall clock in an Intuition window
+python3 python3:examples/planner.py     # calendar + SQLite notes
+python3 python3:examples/snake.py       # freegames snake via amiga.turtle
 ```
 
 The interactive menu picker exposes every example without needing
@@ -192,14 +192,14 @@ Categories:
 Run one:
 
 ```
-DH1:python-os4 DH1:pytests/language/test_control_flow.py
+python3 python3:language/test_control_flow.py
 ```
 
 Run all (from `amiga_mcp` with a live bridge):
 
 ```
-for t in DH1:pytests/language/#? DH1:pytests/stdlib/#? DH1:pytests/io/#?
-  DH1:python-os4 $t
+for t in python3:language/#? python3:stdlib/#? python3:io/#?
+  python3 $t
 ```
 
 Full explanation of the runner + how to add tests:
@@ -211,12 +211,12 @@ Full explanation of the runner + how to add tests:
 for users diagnosing setup and for CI regression checks:
 
 ```
-DH1:python-os4 DH1:pytests/examples/pydiags.py env      # what Python thinks it sees
-DH1:python-os4 DH1:pytests/examples/pydiags.py socket 8.8.8.8 53
-DH1:python-os4 DH1:pytests/examples/pydiags.py dns example.com
-DH1:python-os4 DH1:pytests/examples/pydiags.py http http://example.com/
-DH1:python-os4 DH1:pytests/examples/pydiags.py ssl      # 6-step SSL/HTTPS probe
-DH1:python-os4 DH1:pytests/examples/pydiags.py tasks    # Amiga tasks + libs
+python3 python3:examples/pydiags.py env      # what Python thinks it sees
+python3 python3:examples/pydiags.py socket 8.8.8.8 53
+python3 python3:examples/pydiags.py dns example.com
+python3 python3:examples/pydiags.py http http://example.com/
+python3 python3:examples/pydiags.py ssl      # 6-step SSL/HTTPS probe
+python3 python3:examples/pydiags.py tasks    # Amiga tasks + libs
 ```
 
 Interactive TUI mode (menu-driven) when run without args.

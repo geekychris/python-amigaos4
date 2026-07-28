@@ -15,7 +15,7 @@ runs in both places.
 | host                | screenshot                                | notes                                                                                              |
 | ------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | macOS + stdlib turtle | ![snake mac](screenshots/snake_mac.png) | `python3 -m freegames.snake` — Tk canvas, "Python Turtle Graphics" title bar                       |
-| AmigaOS 4.1 PPC + `amiga.turtle` | ![snake amiga](screenshots/snake_amiga.png) | `DH1:python-os4 DH1:pytests/examples/snake.py` — real Intuition window, "Python Turtle" title bar |
+| AmigaOS 4.1 PPC + `amiga.turtle` | ![snake amiga](screenshots/snake_amiga.png) | `python3 python3:examples/snake.py` — real Intuition window, "Python Turtle" title bar |
 
 Same game state visible in both shots: white background, green food square,
 black snake segment moving from origin.  The Amiga shot happens to catch the
@@ -45,8 +45,8 @@ for you.  Old wizard-style RequestString chain is kept as a
 fallback for `_amiga` builds without dialog support.
 
 ```
-setenv PYTHONHOME DH1: ; setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/planner.py
+; setenv PYTHONHOME python3: ; ; setenv PYTHONPATH python3:lib
+python3 python3:examples/planner.py
 ```
 
 ![planner calendar view](screenshots/planner_calendar.png)
@@ -86,7 +86,7 @@ Under the hood: `CreateRexxMsg → CreateArgstring → PutMsg → WaitPort
 
 ### `rexx_console.py` — clickable REXX playground
 
-`DH1:python-os4 DH1:pytests/examples/rexx_console.py`
+`python3 python3:examples/rexx_console.py`
 
 ![rexx console](screenshots/rexx_console.png)
 
@@ -102,7 +102,7 @@ Under the hood: `CreateRexxMsg → CreateArgstring → PutMsg → WaitPort
 
 Companion text-mode smoke test:
 
-`DH1:python-os4 DH1:pytests/examples/arexx_demo.py`
+`python3 python3:examples/arexx_demo.py`
 
 Prints the detected ports, executes `say 'from python: answer is
 ' || (6*7); return 42` through the interpreter (returns `'42'`),
@@ -114,7 +114,7 @@ Everything below was captured live from OS4 in this session.
 
 ### 1. `clock.py` — real Intuition window with live time
 
-`DH1:python-os4 DH1:pytests/examples/clock.py`
+`python3 python3:examples/clock.py`
 
 ![clock running](screenshots/clock_running.png)
 
@@ -129,7 +129,7 @@ confirming the event loop is actually looping.
 
 ### 2. `window_sysmon.py` — live system dashboard
 
-`DH1:python-os4 DH1:pytests/examples/window_sysmon.py`
+`python3 python3:examples/window_sysmon.py`
 
 ![window sysmon](screenshots/window_sysmon.png)
 
@@ -202,14 +202,14 @@ running (see the amiga_mcp repo for setup).  Then:
 
 ```
 # from the host, once QEMU + bridge are up:
-amiga_push_file build-ppc-amigaos/python-stripped.exe DH1:python-os4
-amiga_transfer  amiga_bindings/                       DH1:pytests/amiga_bindings/
-amiga_transfer  examples/                             DH1:pytests/examples/
+amiga_push_file build-ppc-amigaos/python-stripped.exe python3
+amiga_transfer  amiga_bindings/                       python3:amiga_bindings/
+amiga_transfer  examples/                             python3:examples/
 
 # on the Amiga (or via amiga_dos_command from host):
-DH1:python-os4 DH1:pytests/examples/clock.py
-DH1:python-os4 DH1:pytests/examples/window_sysmon.py
-DH1:python-os4 DH1:pytests/examples/snake.py       # arrow keys to steer
+python3 python3:examples/clock.py
+python3 python3:examples/window_sysmon.py
+python3 python3:examples/snake.py       # arrow keys to steer
 ```
 
 Full list of demos in `examples/README.md`.

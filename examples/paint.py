@@ -10,10 +10,12 @@ Controls (mouse):
   ESC / close window      → quit
 
 Run:
-    DH1:python-os4 DH1:pytests/examples/paint.py
+    python3 python3:examples/paint.py
 """
 import sys
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # freegames.paint's whole implementation, adapted to work without
 # a freegames package install (it's tiny). Faithful to the original

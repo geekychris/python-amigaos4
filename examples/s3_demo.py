@@ -18,15 +18,17 @@ Requires:
   bsdsocket + net   (rtl8139 up, IP configured — same as amiga.https)
 
 Usage:
-  DH1:python-os4 DH1:pytests/examples/s3_demo.py           — full cycle
-  DH1:python-os4 DH1:pytests/examples/s3_demo.py list      — buckets only
-  DH1:python-os4 DH1:pytests/examples/s3_demo.py --keep    — don't delete
+  python3 python3:examples/s3_demo.py           — full cycle
+  python3 python3:examples/s3_demo.py list      — buckets only
+  python3 python3:examples/s3_demo.py --keep    — don't delete
 """
 import sys
 import time
 import uuid
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 from amiga import s3
 
 

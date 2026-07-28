@@ -23,7 +23,9 @@ import sys
 import time
 
 # Prefer our packaged bindings over any stub in the default path.
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
     import _amiga

@@ -13,10 +13,12 @@ Prints a full-screen refresh with an ANSI clear so the output stays
 readable in an Amiga CLI window.  Ctrl-C exits cleanly.
 
 Run:
-    DH1:python-os4 DH1:pytests/examples/sysmon.py [interval_seconds]
+    python3 python3:examples/sysmon.py [interval_seconds]
 """
 import sys, os
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import time
 import _amiga

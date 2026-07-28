@@ -5,16 +5,16 @@ Two ways to drive it:
 
   1. **Interactive TUI** (no args): menu-driven browser.  Pick a check
      from the numbered list, see full output.  Type `q` to quit.
-         DH1:python-os4 DH1:pytests/examples/pydiags.py
+         python3 python3:examples/pydiags.py
   2. **Headless / scripted** (subcommand arg): run one check + print
      structured output.  Suitable for shelling from another program
      (devbench's amiga_dos_command, an ARexx script, a Startup line).
-         DH1:python-os4 DH1:pytests/examples/pydiags.py dns example.com
-         DH1:python-os4 DH1:pytests/examples/pydiags.py socket 8.8.8.8 53
-         DH1:python-os4 DH1:pytests/examples/pydiags.py env
-         DH1:python-os4 DH1:pytests/examples/pydiags.py tasks --top 20
-         DH1:python-os4 DH1:pytests/examples/pydiags.py --json ports
-         DH1:python-os4 DH1:pytests/examples/pydiags.py setenv KEY VALUE
+         python3 python3:examples/pydiags.py dns example.com
+         python3 python3:examples/pydiags.py socket 8.8.8.8 53
+         python3 python3:examples/pydiags.py env
+         python3 python3:examples/pydiags.py tasks --top 20
+         python3 python3:examples/pydiags.py --json ports
+         python3 python3:examples/pydiags.py setenv KEY VALUE
 
 Every check writes to two streams:
 
@@ -52,7 +52,9 @@ except ImportError:
 # if the package isn't on the path (running pydiags from a workstation
 # for smoke tests) we skip silently and rely on the host resolver.
 try:
-    sys.path.insert(0, "DH1:pytests/amiga_bindings")
+    for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
     import amiga.netfix     # noqa: F401 — installed as side-effect of import
     HAVE_NETFIX = True
 except ImportError:

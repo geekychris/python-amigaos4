@@ -1,5 +1,5 @@
 ; Launcher for hello_ipc — sets PYTHONHOME/PATH then runs the demo.
 ; Usage:  execute DH1:scripts/hello_ipc
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/hello_ipc.py
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
+python3 python3:examples/hello_ipc.py

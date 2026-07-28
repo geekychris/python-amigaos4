@@ -90,7 +90,7 @@ def main():
     probe_amigaamp(ports)
 
     print()
-    print("For interactive use: DH1:python-os4 DH1:pytests/examples/rexx_console.py")
+    print("For interactive use: python3 python3:examples/rexx_console.py")
 
 
 if __name__ == "__main__":

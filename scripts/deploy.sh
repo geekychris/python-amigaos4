@@ -58,7 +58,7 @@ if [ "$binary" -eq 1 ]; then
     cat <<EOF
 amiga_push_file(
   local_path="$STRIPPED",
-  amiga_path="DH1:python-os4")
+  amiga_path="python3")
 EOF
     echo
 fi
@@ -66,41 +66,41 @@ fi
 if [ "$code" -eq 1 ]; then
     echo "--- amiga_bindings package tree ---"
     cat <<EOF
-amiga_dos_command("makedir DH1:pytests/amiga_bindings/amiga/{arexx,bridge,dos,exec,graphics,https,intuition,netfix,os,pip,reaction,s3,turtle,ui}")
+amiga_dos_command("makedir python3:amiga_bindings/amiga/{arexx,bridge,dos,exec,graphics,https,intuition,netfix,os,pip,reaction,s3,turtle,ui}")
 
 amiga_transfer(
   source="$REPO/amiga_bindings/amiga/*.py",
-  dest="DH1:pytests/amiga_bindings/amiga/")
+  dest="python3:amiga_bindings/amiga/")
 EOF
     for sub in arexx bridge dos exec graphics https intuition netfix os pip reaction s3 turtle ui; do
         cat <<EOF
 amiga_transfer(
   source="$REPO/amiga_bindings/amiga/$sub/*.py",
-  dest="DH1:pytests/amiga_bindings/amiga/$sub/")
+  dest="python3:amiga_bindings/amiga/$sub/")
 EOF
     done
     echo
     echo "--- examples ---"
     cat <<EOF
-amiga_dos_command("makedir DH1:pytests/examples")
+amiga_dos_command("makedir python3:examples")
 
 amiga_transfer(
   source="$REPO/examples/*.py",
-  dest="DH1:pytests/examples/")
+  dest="python3:examples/")
 EOF
     echo
     echo "--- tests ---"
     cat <<EOF
-amiga_dos_command("makedir DH1:pytests/{language,stdlib,io,amiga}")
+amiga_dos_command("makedir python3:{language,stdlib,io,amiga}")
 
 amiga_push_file(
   local_path="$REPO/tests/framework.py",
-  amiga_path="DH1:pytests/framework.py")
+  amiga_path="python3:framework.py")
 
 for sub in language stdlib io amiga; do
     amiga_transfer(
       source="$REPO/tests/\$sub/*.py",
-      dest="DH1:pytests/\$sub/")
+      dest="python3:\$sub/")
 done
 EOF
     echo
@@ -150,16 +150,16 @@ fi
 cat <<'FOOTER'
 
 --- once deployed, set env vars ONCE per boot (see docs/RUNNING.md) ---
-amiga_dos_command("setenv PYTHONHOME DH1: ; setenv PYTHONPATH DH1:lib")
+amiga_dos_command("; setenv PYTHONHOME python3: ; ; setenv PYTHONPATH python3:lib")
 
 --- sanity check ---
-amiga_dos_command("DH1:python-os4 --version")
+amiga_dos_command("python3 --version")
    -> Python 3.12.7
 
-amiga_dos_command("DH1:python-os4 RAM:tiny.py")
+amiga_dos_command("python3 RAM:tiny.py")
    -> hello world
       argv: ['RAM:tiny.py']
 
 --- run a demo (see docs/DEMOS.md for the full gallery) ---
-amiga_dos_command("DH1:python-os4 DH1:pytests/examples/clock.py")
+amiga_dos_command("python3 python3:examples/clock.py")
 FOOTER

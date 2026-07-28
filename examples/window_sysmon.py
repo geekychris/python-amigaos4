@@ -10,10 +10,12 @@ Refreshes every 2 seconds unless the user is interacting with the
 window (drag/resize/etc).  Exits on close-gadget or ESC.
 
 Run:
-    DH1:python-os4 DH1:pytests/examples/window_sysmon.py
+    python3 python3:examples/window_sysmon.py
 """
 import sys, os, time
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
     import _amiga

@@ -18,7 +18,7 @@ Unlike snake.py this version:
 
 Verification recipe from the host (via bridge tools):
 
-    amiga_dos_command "run >NIL: DH1:python-os4 DH1:pytests/examples/snake_verifiable.py"
+    amiga_dos_command "run >NIL: python3 python3:examples/snake_verifiable.py"
     # let it settle 500ms
     amiga_input_key rawkey=0x4E     # Right
     amiga_input_key rawkey=0x4C     # Up
@@ -28,7 +28,9 @@ Verification recipe from the host (via bridge tools):
     amiga_read_file  T:snake_log.txt   # see the exact event log
 """
 import sys, os
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import amiga.turtle as t
 

@@ -1,5 +1,5 @@
 ; Launcher for clock — sets PYTHONHOME/PATH then runs the demo.
 ; Usage:  execute DH1:scripts/clock
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/clock.py
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
+python3 python3:examples/clock.py

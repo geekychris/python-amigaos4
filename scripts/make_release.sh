@@ -114,8 +114,6 @@ EOF
 cd "$RELEASES_DIR"
 LHA_FILE="${REL_NAME}.lha"
 echo "-> Creating LHA archive ${LHA_FILE} via Docker..."
-rm -f "${LHA_FILE}"
-
 docker run --rm -v "$RELEASES_DIR:/work" amiga-python-build:local bash -c \
     "cd /work && lha a ${LHA_FILE} ${REL_NAME}"
 

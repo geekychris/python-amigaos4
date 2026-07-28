@@ -13,10 +13,10 @@ exact same byte-count won't be re-synced. Add --force to skip the
 compare and always overwrite.
 
 Examples:
-    push:  DH1:python-os4 s3sync.py RAM:notes/ mybucket:backups/notes
-    pull:  DH1:python-os4 s3sync.py --down RAM:notes/ mybucket:backups/notes
-    view:  DH1:python-os4 s3sync.py --list mybucket:backups/notes
-    dry:   DH1:python-os4 s3sync.py --dry-run RAM:notes/ mybucket:backups/notes
+    push:  python3 s3sync.py RAM:notes/ mybucket:backups/notes
+    pull:  python3 s3sync.py --down RAM:notes/ mybucket:backups/notes
+    view:  python3 s3sync.py --list mybucket:backups/notes
+    dry:   python3 s3sync.py --dry-run RAM:notes/ mybucket:backups/notes
 
 Auth: uses play.min.io + sandbox creds by default. Override with env
 vars S3_ENDPOINT, S3_ACCESS, S3_SECRET before running.
@@ -25,7 +25,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 from amiga import s3
 
 

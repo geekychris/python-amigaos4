@@ -21,21 +21,21 @@ module and prints against actual OS4 state (73 tasks, 86 libraries,
 
 Deploy once:
 ```
-amiga_transfer  examples/  DH1:pytests/examples/
+amiga_transfer  examples/  python3:examples/
 ```
 
 Then on the Amiga (or via `amiga_dos_command`):
 ```
-DH1:python-os4 DH1:pytests/examples/hello_dos.py
-DH1:python-os4 DH1:pytests/examples/hello_ipc.py
-DH1:python-os4 DH1:pytests/examples/hello_gui.py
+python3 python3:examples/hello_dos.py
+python3 python3:examples/hello_ipc.py
+python3 python3:examples/hello_gui.py
 
-DH1:python-os4 DH1:pytests/examples/sysmon.py               # Ctrl-C to quit
-DH1:python-os4 DH1:pytests/examples/sysmon.py 0.5           # 500ms refresh
+python3 python3:examples/sysmon.py               # Ctrl-C to quit
+python3 python3:examples/sysmon.py 0.5           # 500ms refresh
 
-DH1:python-os4 DH1:pytests/examples/port_service.py         # full round-trip
-DH1:python-os4 DH1:pytests/examples/task_watcher.py         # long-running
-DH1:python-os4 DH1:pytests/examples/gui_form.py             # pops real windows!
+python3 python3:examples/port_service.py         # full round-trip
+python3 python3:examples/task_watcher.py         # long-running
+python3 python3:examples/gui_form.py             # pops real windows!
 ```
 
 ## The paradigm we're modelling

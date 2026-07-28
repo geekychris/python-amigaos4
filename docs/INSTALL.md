@@ -64,7 +64,7 @@ practice, from a Claude Code session with the amiga-devbench MCP:
 
 ```
 # a) the interpreter
-amiga_push_file build-ppc-amigaos/python-stripped.exe DH1:python-os4
+amiga_push_file build-ppc-amigaos/python-stripped.exe python3
 
 # b) stdlib flat files (~7 MB, one-time)
 amiga_dos_command  "makedir DH1:lib DH1:lib/encodings DH1:lib/collections \
@@ -99,25 +99,25 @@ amiga_dos_command "if exists DH1:lib/python312.zip \
                    endif"
 
 # d) our bindings + demos
-amiga_dos_command "makedir DH1:pytests/amiga_bindings/amiga/{bridge,dos,exec,intuition,os,pip,turtle} \
-                            DH1:pytests/examples \
-                            DH1:pytests/{language,stdlib,io,amiga}"
+amiga_dos_command "makedir python3:amiga_bindings/amiga/{bridge,dos,exec,intuition,os,pip,turtle} \
+                            python3:examples \
+                            python3:{language,stdlib,io,amiga}"
 
-amiga_transfer amiga_bindings/amiga/*.py                DH1:pytests/amiga_bindings/amiga/
-amiga_transfer amiga_bindings/amiga/dos/*.py            DH1:pytests/amiga_bindings/amiga/dos/
-amiga_transfer amiga_bindings/amiga/exec/*.py           DH1:pytests/amiga_bindings/amiga/exec/
-amiga_transfer amiga_bindings/amiga/intuition/*.py      DH1:pytests/amiga_bindings/amiga/intuition/
-amiga_transfer amiga_bindings/amiga/bridge/*.py         DH1:pytests/amiga_bindings/amiga/bridge/
-amiga_transfer amiga_bindings/amiga/os/*.py             DH1:pytests/amiga_bindings/amiga/os/
-amiga_transfer amiga_bindings/amiga/pip/*.py            DH1:pytests/amiga_bindings/amiga/pip/
-amiga_transfer amiga_bindings/amiga/turtle/*.py         DH1:pytests/amiga_bindings/amiga/turtle/
+amiga_transfer amiga_bindings/amiga/*.py                python3:amiga_bindings/amiga/
+amiga_transfer amiga_bindings/amiga/dos/*.py            python3:amiga_bindings/amiga/dos/
+amiga_transfer amiga_bindings/amiga/exec/*.py           python3:amiga_bindings/amiga/exec/
+amiga_transfer amiga_bindings/amiga/intuition/*.py      python3:amiga_bindings/amiga/intuition/
+amiga_transfer amiga_bindings/amiga/bridge/*.py         python3:amiga_bindings/amiga/bridge/
+amiga_transfer amiga_bindings/amiga/os/*.py             python3:amiga_bindings/amiga/os/
+amiga_transfer amiga_bindings/amiga/pip/*.py            python3:amiga_bindings/amiga/pip/
+amiga_transfer amiga_bindings/amiga/turtle/*.py         python3:amiga_bindings/amiga/turtle/
 
-amiga_transfer examples/*.py                            DH1:pytests/examples/
-amiga_push_file tests/framework.py                      DH1:pytests/framework.py
-amiga_transfer tests/language/*.py                      DH1:pytests/language/
-amiga_transfer tests/stdlib/*.py                        DH1:pytests/stdlib/
-amiga_transfer tests/io/*.py                            DH1:pytests/io/
-amiga_transfer tests/amiga/*.py                         DH1:pytests/amiga/
+amiga_transfer examples/*.py                            python3:examples/
+amiga_push_file tests/framework.py                      python3:framework.py
+amiga_transfer tests/language/*.py                      python3:language/
+amiga_transfer tests/stdlib/*.py                        python3:stdlib/
+amiga_transfer tests/io/*.py                            python3:io/
+amiga_transfer tests/amiga/*.py                         python3:amiga/
 ```
 
 ## 5. Every boot: set the env vars
@@ -127,8 +127,8 @@ amiga_transfer tests/amiga/*.py                         DH1:pytests/amiga/
 diagnosis.
 
 ```
-amiga_dos_command "setenv PYTHONHOME DH1:"
-amiga_dos_command "setenv PYTHONPATH DH1:lib"
+amiga_dos_command "; setenv PYTHONHOME python3:"
+amiga_dos_command "; setenv PYTHONPATH python3:lib"
 ```
 
 Persist these across boots by adding to `S:User-Startup`:
@@ -141,14 +141,14 @@ SetEnv PYTHONPATH DH1:lib
 ## 6. Sanity check
 
 ```
-amiga_dos_command "DH1:python-os4 --version"
+amiga_dos_command "python3 --version"
    -> Python 3.12.7
 
-amiga_dos_command "DH1:python-os4 -c \"print(2+2)\""
+amiga_dos_command "python3 -c \"print(2+2)\""
    -> 4
 
 amiga_push_file  /tmp/hi.py  RAM:hi.py         # your local test script
-amiga_dos_command "DH1:python-os4 RAM:hi.py"
+amiga_dos_command "python3 RAM:hi.py"
 ```
 
 If any of those produce no output, see the *Diagnosing silent init*
@@ -157,7 +157,7 @@ section in [RUNNING.md](RUNNING.md).
 ## 7. Run a real demo
 
 ```
-amiga_dos_command "DH1:python-os4 DH1:pytests/examples/clock.py"
+amiga_dos_command "python3 python3:examples/clock.py"
 ```
 
 Should pop a "Python Clock" window on Workbench.  Ctrl-C from the
@@ -170,7 +170,7 @@ New binary only:
 
 ```
 scripts/build.sh --strip
-amiga_push_file build-ppc-amigaos/python-stripped.exe DH1:python-os4
+amiga_push_file build-ppc-amigaos/python-stripped.exe python3
 ```
 
 New Python-side code (bindings/examples/tests) — no rebuild needed,
