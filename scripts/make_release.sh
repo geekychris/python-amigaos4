@@ -95,7 +95,8 @@ fi
 
 [ -f "$REPO/README.md" ] && cp "$REPO/README.md" "$SYS_DIR/README.md"
 [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$SYS_DIR/LICENSE"
-[ -f "$REPO/Install_Python3" ] && cp "$REPO/Install_Python3" "$STAGE_DIR/Install_Python3"
+[ -f "$REPO/Install" ] && cp "$REPO/Install" "$STAGE_DIR/Install"
+[ -f "$REPO/Install.info" ] && cp "$REPO/Install.info" "$STAGE_DIR/Install.info"
 
 # 7. Create Startup Script Snippet
 echo "-> Creating S/Package-Startup..."
