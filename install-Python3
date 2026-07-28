@@ -1,54 +1,66 @@
-; AmigaOS 4 Installation Utility Script for Python 3.12.7
-; Used by SYS:Utilities/Installation Utility
+#!/usr/bin/env python3
+"""install-Python3 — Python 3.12.7 Installer for AmigaOS 4"""
+import os
+import sys
+import shutil
 
-(language "english")
+def main():
+    print("==================================================")
+    print(" Python 3.12.7 for AmigaOS 4.1 Installer")
+    print("==================================================")
+    print()
 
-(welcome
-  (text "Welcome to the Python 3.12.7 for AmigaOS 4.1 Installer.\n\n"
-        "This installer will setup Python 3 on your AmigaOS 4 system:\n"
-        "  1. Install executable to C:python3\n"
-        "  2. Install main library files to SYS:System/python3\n"
-        "  3. Configure 'Assign python3: SYS:System/python3' in S:User-Startup\n"
-        "  4. Set persistent environment variables (PYTHONHOME & PYTHONPATH)\n\n"
-        "Click Proceed to start installation.")
-)
+    target_sys = "SYS:System/python3"
 
-(set #target-c "C:")
-(set #target-sys "SYS:System/python3")
+    print("Step 1: Copying python3 executable to C:...")
+    try:
+        if os.path.exists("C/python3"):
+            shutil.copy2("C/python3", "C:/python3")
+            print("  -> Copied C/python3 -> C:python3")
+    except Exception as e:
+        print(f"  -> Warning copying to C:: {e}")
 
-(message "Step 1: Installing command executable to C:...")
+    print("Step 2: Copying Python 3 files to SYS:System/python3...")
+    try:
+        if os.path.exists("System/python3"):
+            shutil.copytree("System/python3", target_sys, dirs_exist_ok=True)
+            print("  -> Copied System/python3 -> SYS:System/python3")
+    except Exception as e:
+        print(f"  -> Warning copying library files: {e}")
 
-(copyfiles
-  (prompt "Copying python3 executable to C:")
-  (source "C/python3")
-  (dest #target-c)
-  (help "Installs the python3 executable into your C: command directory.")
-)
+    print("Step 3: Configuring persistent environment variables...")
+    try:
+        os.system("SetEnv PYTHONHOME SAVE python3:")
+        os.system("SetEnv PYTHONPATH SAVE python3:lib")
+        print("  -> Set persistent PYTHONHOME and PYTHONPATH in ENVARC:")
+    except Exception as e:
+        print(f"  -> Warning setting env vars: {e}")
 
-(message "Step 2: Installing Python 3 system files...")
+    print("Step 4: Configuring assignment in S:User-Startup...")
+    user_startup = "S:User-Startup"
+    assign_line = "Assign python3: SYS:System/python3\n"
 
-(copydirs
-  (prompt "Copying Python 3 system files to SYS:System/python3...")
-  (source "System/python3")
-  (dest #target-sys)
-  (help "Copies the Python 3 standard library, Amiga bindings, examples, and documentation.")
-)
+    try:
+        need_add = True
+        if os.path.exists(user_startup):
+            with open(user_startup, "r", encoding="latin-1", errors="ignore") as f:
+                if "python3:" in f.read():
+                    need_add = False
+                    print("  -> 'python3:' assign is already present in S:User-Startup")
+        if need_add:
+            with open(user_startup, "a", encoding="latin-1") as f:
+                f.write("\n; --- Python 3.12.7 for AmigaOS 4 ---\n")
+                f.write(assign_line)
+                f.write("; --- End Python 3 ---\n")
+            print("  -> Added 'Assign python3: SYS:System/python3' to S:User-Startup")
+    except Exception as e:
+        print(f"  -> Warning updating S:User-Startup: {e}")
 
-(message "Step 3: Configuring assignment and environment variables...")
+    print()
+    print("==================================================")
+    print(" Installation of Python 3.12.7 complete!")
+    print(" You can now run: python3 --version")
+    print("==================================================")
 
-(if (askbool
-      (prompt "Would you like to add 'Assign python3: SYS:System/python3' to S:User-Startup and save environment variables?")
-      (default 1)
-      (help "Adds 'Assign python3: SYS:System/python3' to S:User-Startup and sets persistent PYTHONHOME and PYTHONPATH environment variables.")
-    )
-    (all
-      (run "SetEnv PYTHONHOME SAVE python3:")
-      (run "SetEnv PYTHONPATH SAVE python3:lib")
-      (startup "python3"
-        (prompt "Adding 'Assign python3: SYS:System/python3' to S:User-Startup...")
-        (command "; --- Python 3.12.7 for AmigaOS 4 ---\nAssign python3: SYS:System/python3\n; --- End Python 3 ---\n")
-      )
-    )
-)
-
-(message "Installation of Python 3.12.7 completed successfully!\n\nYou can now open a Shell and run:\n  python3 --version")
+if __name__ == "__main__":
+    main()
