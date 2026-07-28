@@ -46,6 +46,44 @@ sys.path.insert(0, "DH1:pytests/examples")
 import fileman as _fm
 
 
+# --- Diagnostic logger --------------------------------------------------
+# `run` on AmigaDOS detaches from the CLI's stdout, and `>RAM:fm2.log`
+# on the run line only captures run's own output, not the child's
+# print(). So we log everything to a file ourselves. Overwrites at
+# startup; `type RAM:fm2.log` after any UI action to see the trace.
+
+_LOG_PATH = "RAM:fm2.log"
+try:
+    _log_fp = open(_LOG_PATH, "w")
+except Exception:
+    _log_fp = None
+
+def _log(msg):
+    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    if _log_fp:
+        try:
+            _log_fp.write(line + "\n")
+            _log_fp.flush()
+        except Exception:
+            pass
+
+# Monkey-patch print so any accidental print() calls also hit the log.
+_orig_print = print
+def print(*a, **kw):        # noqa: A001
+    _orig_print(*a, **kw)
+    if _log_fp:
+        try:
+            msg = " ".join(str(x) for x in a)
+            _log_fp.write(msg + "\n")
+            _log_fp.flush()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- IDs
 
 ID_LB_LEFT     = 10
