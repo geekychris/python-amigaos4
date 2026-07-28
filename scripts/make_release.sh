@@ -93,10 +93,12 @@ if [ -d "$REPO/docs" ]; then
     cp -r "$REPO/docs"/* "$SYS_DIR/docs/"
 fi
 
-[ -f "$REPO/README.md" ] && cp "$REPO/README.md" "$SYS_DIR/README.md"
+[ -f "$REPO/README.md" ] && cp "$REPO/README.md" "$STAGE_DIR/README.md" && cp "$REPO/README.md" "$SYS_DIR/README.md" && cp "$REPO/README.md" "$STAGE_DIR/readme.txt"
+[ -f "$REPO/README.md.info" ] && cp "$REPO/README.md.info" "$STAGE_DIR/README.md.info"
 [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$SYS_DIR/LICENSE"
-[ -f "$REPO/install-Python3" ] && cp "$REPO/install-Python3" "$STAGE_DIR/install-Python3"
-[ -f "$REPO/install-Python3.info" ] && cp "$REPO/install-Python3.info" "$STAGE_DIR/install-Python3.info"
+[ -f "$REPO/Install-Python3" ] && cp "$REPO/Install-Python3" "$STAGE_DIR/Install-Python3"
+[ -f "$REPO/Install-Python3.info" ] && cp "$REPO/Install-Python3.info" "$STAGE_DIR/Install-Python3.info"
+
 
 # 7. Create Startup Script Snippet
 echo "-> Creating S/Package-Startup..."

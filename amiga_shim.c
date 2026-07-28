@@ -242,3 +242,17 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
     Delay(ticks);
     return 0;
 }
+
+/* --- pthread_mutex_destroy shim ------------------------------------
+ * OS4 newlib libpthread returns EBUSY when destroying mutexes that were
+ * used by Python lock structures. Treat EBUSY as success so stderr isn't
+ * spammed with "pthread_mutex_destroy: Device or resource busy". */
+#undef pthread_mutex_destroy
+int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex)
+{
+    int res = pthread_mutex_destroy(mutex);
+    if (res == EBUSY) {
+        return 0;
+    }
+    return res;
+}
