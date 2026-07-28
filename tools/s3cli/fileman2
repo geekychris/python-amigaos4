@@ -1,0 +1,25 @@
+.KEY LEFT/K,RIGHT/K
+.BRA {
+.KET }
+.def LEFT RAM:
+.def RIGHT s3://
+;
+; fileman2 — one-line launcher for the ReAction dual-pane file
+; manager pointed at the local MinIO on the host.
+;
+; Usage:
+;   execute DH1:s3cli/fileman2
+;                        — RAM: on left, s3:// buckets on right
+;   execute DH1:s3cli/fileman2 LEFT=DH1: RIGHT=s3://test
+;                        — override either pane's starting path
+;
+; Installs the S3 env from s3-env-local, sets FILEMAN2_LEFT/RIGHT,
+; and runs the Python program. `run` detaches so the shell frees.
+
+execute DH1:s3cli/s3-env-local
+
+setenv FILEMAN2_LEFT  {LEFT}
+setenv FILEMAN2_RIGHT {RIGHT}
+
+echo "fileman2: launching (left={LEFT} right={RIGHT})"
+run DH1:python-os4 DH1:pytests/examples/fileman2.py
