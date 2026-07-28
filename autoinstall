@@ -64,7 +64,7 @@ EndIf
 Echo ""
 Echo "Step 4: Setting persistent environment variables..."
 SetEnv PYTHONHOME SAVE python3: >NIL:
-SetEnv PYTHONPATH SAVE python3:lib >NIL:
+SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages >NIL:
 Echo "  -> Set persistent PYTHONHOME and PYTHONPATH in ENVARC:"
 
 Echo ""

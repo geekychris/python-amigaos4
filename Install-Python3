@@ -87,7 +87,7 @@ def post_install():
     if not env_present:
         try:
             os.system("SetEnv PYTHONHOME SAVE python3:")
-            os.system("SetEnv PYTHONPATH SAVE python3:lib")
+            os.system("SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages")
         except:
             pass
 

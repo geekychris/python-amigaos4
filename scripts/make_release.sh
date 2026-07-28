@@ -132,7 +132,7 @@ Path python3:bin ADD
 
 ; Run these commands once in a Shell to persist environment variables:
 SetEnv PYTHONHOME SAVE python3:
-SetEnv PYTHONPATH SAVE python3:lib
+SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages
 EOF
 
 # 8. Create LHA archive using Docker's lha tool
