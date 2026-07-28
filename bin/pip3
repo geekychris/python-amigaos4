@@ -1,2 +1,2 @@
 .key ARGS/F
-python3 -m pip <ARGS>
+python3 -c "import sys; from pip._internal.cli.main import main; sys.exit(main())" <ARGS>
