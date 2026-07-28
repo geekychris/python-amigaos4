@@ -1639,21 +1639,23 @@ py_do_method(PyObject *self, PyObject *args)
             return NULL;
         }
     }
-    /* Build a fake IntuiMessage-style call — actually just IDoMethod
-     * with the method id + a stream of ULONGs. IDoMethod signature is
-     * variadic; use the pointer form when we have >0 args. */
-    ULONG rc = IDoMethod(obj, (Msg)&method_id);
-    /* NOTE: For simple stateless methods (WM_OPEN, WM_CLOSE, DISPOSE)
-     * a single-ULONG "message" suffices — the class only reads
-     * MethodID from the first ULONG. Methods that take arguments
-     * expect a struct so we build one on the stack: */
-    if (nargs > 2) {
-        unsigned long msg[16] = { method_id };
-        for (Py_ssize_t i = 2; i < nargs && (i - 2) < 15; i++) {
-            msg[i - 1] = a[i - 2];
-        }
-        rc = IDoMethod(obj, (Msg)msg);
+    /* CRITICAL: IDoMethod is variadic — the args after `obj` become
+     * (MethodID, arg1, arg2, ...) which the library packs into a Msg
+     * struct internally. Calling IDoMethod(obj, (Msg)&method_id) —
+     * as we did until 2026-07-28 — passes a POINTER as if it were
+     * the MethodID vararg, causing the class dispatcher to try to
+     * invoke a method whose ID is the address of a stack variable.
+     * window.class silently returns 0 from WM_OPEN as a result.
+     *
+     * IDoMethodA is the pre-built-Msg variant (non-variadic). Use
+     * it consistently: allocate a small ULONG array, fill in
+     * MethodID + trailing args, hand off. This matches how the
+     * SDK class libraries expect messages to be laid out. */
+    unsigned long msg[16] = { method_id };
+    for (Py_ssize_t i = 2; i < nargs && (i - 2) < 15; i++) {
+        msg[i - 1] = a[i - 2];
     }
+    ULONG rc = IDoMethodA(obj, (Msg)msg);
     return PyLong_FromUnsignedLong(rc);
 }
 

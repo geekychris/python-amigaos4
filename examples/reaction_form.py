@@ -54,69 +54,58 @@ def try_reaction():
         print(f"try_reaction: {msg}", flush=True)
 
     try:
-        # Mirror refs/os4-sdk/base/Examples/GUI/Window/Window.c line
-        # by line. Simplest possible: one button, one layout, one
-        # window, WM_OPEN. Get *this* working first, then re-add the
-        # form gadgets.
-        _log("new_object button ...")
-        ok = _amiga.new_object("button.gadget", {
-            "GA_ID": ID_OK, "GA_Text": "Click Me",
-            "GA_RelVerify": True,
+        # Build gadgets: labeled Name/Age/Email/Notes fields + OK/Cancel row.
+        name = _amiga.new_object("string.gadget", {
+            "GA_ID": ID_NAME, "STRINGA_MaxChars": 40,
+            "STRINGA_TextVal": "", "LAYOUT_Label": "Name:",
         })
-        _log(f"  ok={hex(ok)}")
+        age = _amiga.new_object("integer.gadget", {
+            "GA_ID": ID_AGE, "INTEGER_Number": 30,
+            "INTEGER_Minimum": 0, "INTEGER_Maximum": 200,
+            "LAYOUT_Label": "Age:",
+        })
+        email = _amiga.new_object("string.gadget", {
+            "GA_ID": ID_EMAIL, "STRINGA_MaxChars": 60,
+            "STRINGA_TextVal": "you@example.com",
+            "LAYOUT_Label": "Email:",
+        })
+        notes = _amiga.new_object("string.gadget", {
+            "GA_ID": ID_NOTES, "STRINGA_MaxChars": 120,
+            "STRINGA_TextVal": "", "LAYOUT_Label": "Notes:",
+        })
+        ok_btn = _amiga.new_object("button.gadget", {
+            "GA_ID": ID_OK, "GA_Text": "OK", "GA_RelVerify": True,
+        })
+        cancel_btn = _amiga.new_object("button.gadget", {
+            "GA_ID": ID_CANCEL, "GA_Text": "Cancel", "GA_RelVerify": True,
+        })
 
-        _log("new_object_multi layout ...")
-        # LAYOUT_DeferLayout=1 tells the layout: don't compute geometry
-        # until WM_OPEN asks for it. Without this, layout tries to size
-        # itself at NewObject time before it has a screen context, and
-        # WM_OPEN's later resize step fails. The SDK Window.c example
-        # uses this flag.
+        button_row = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 0),         # LAYOUT_ORIENT_HORIZ
+            ("LAYOUT_AddChild", ok_btn),
+            ("LAYOUT_AddChild", cancel_btn),
+        ])
         root = _amiga.new_object_multi("layout.gadget", [
             ("LAYOUT_Orientation", 1),         # LAYOUT_ORIENT_VERT
             ("LAYOUT_SpaceOuter", True),
-            # LAYOUT_DeferLayout = LAYOUT_Dummy+26 = 0x85007000+26
-            # not yet in _amigamodule.c TAG_TABLE — pass as int to
-            # skip a rebuild while debugging.
-            (0x8500701a, True),
-            ("LAYOUT_AddChild", ok),
+            ("LAYOUT_SpaceInner", True),
+            (0x8500701a,           True),      # LAYOUT_DeferLayout
+            ("LAYOUT_AddChild", name),
+            ("LAYOUT_AddChild", age),
+            ("LAYOUT_AddChild", email),
+            ("LAYOUT_AddChild", notes),
+            ("LAYOUT_AddChild", button_row),
         ])
-        _log(f"  root={hex(root)}")
-
-        _log("new_object window.class — MINIMAL: no layout, full tag set")
-        # KEY INSIGHT (2026-07-28): window.class's WM_OPEN handler
-        # calls IIntuition->OpenWindowTagList() under the hood. That
-        # function REQUIRES:
-        #   - WA_Flags with at least a refresh mode (WFLG_SIMPLE_REFRESH
-        #     = 0x40 or WFLG_SMART_REFRESH = 0). Without a refresh
-        #     mode set, OpenWindow returns NULL and WM_OPEN
-        #     propagates that as 0.
-        #   - WA_MinWidth/MinHeight/MaxWidth/MaxHeight for a sizable
-        #     window (otherwise "size gadget" without limits fails).
-        # These are set automatically by OpenWindowTags in
-        # py_open_window (see _amigamodule.c:318) — our BOOPSI path
-        # was missing them, which is why WM_OPEN kept returning 0.
-        #
-        # Tag constants:
-        #   WFLG_SIZEGADGET   = 0x00000001
-        #   WFLG_DRAGBAR      = 0x00000002
-        #   WFLG_DEPTHGADGET  = 0x00000004
-        #   WFLG_CLOSEGADGET  = 0x00000008
-        #   WFLG_SIMPLE_REFRESH = 0x00000040
-        #   WFLG_ACTIVATE     = 0x00001000
-        # (from intuition/intuition.h)
-        # Match Hyperion SDK example
-        # (refs/os4-sdk/base/Examples/GUI/Window/Window.c) as closely
-        # as possible: individual booleans (not WA_Flags), WA_ScreenTitle
-        # required, position via WINDOW_Position.
         win = _amiga.new_object_multi("window.class", [
-            ("WA_ScreenTitle", "reaction_form test"),
-            ("WA_Title",       "Python ReAction"),
+            ("WA_ScreenTitle", "New person"),
+            ("WA_Title",       "New person"),
             ("WA_Activate",    True),
             ("WA_DepthGadget", True),
             ("WA_DragBar",     True),
             ("WA_CloseGadget", True),
             ("WA_SizeGadget",  True),
             ("WINDOW_Position", 2),   # WPOS_CENTERMOUSE
+            ("WINDOW_Layout",  root),
         ])
         _log(f"  win={hex(win)}")
         if not win:
