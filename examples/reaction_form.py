@@ -1,12 +1,14 @@
 """reaction_form.py — real ReAction window with layout.gadget.
 
-Web-search revealed the two things my earlier attempts had wrong:
-  1. IDoMethod(obj, WM_OPEN, NULL) — NULL arg required. My earlier
-     code sent just WM_OPEN which made window.class read garbage.
-  2. window.class + layout.gadget class-lookup works via string
-     name too, but attaches children more reliably when
-     LAYOUT_AddChild entries live in the initial NewObject tag list
-     — which needs new_object_multi (already in _amiga).
+Matches the canonical Hyperion SDK 54.25 pattern in
+    refs/os4-sdk/base/Examples/GUI/Window/Window.c
+Two things that mattered:
+  1. IDoMethod(obj, WM_OPEN) takes TWO args — no trailing NULL/0.
+     A stray zero appears to poison the method payload and
+     window.class silently returns NULL.
+  2. layout.gadget children attach reliably via LAYOUT_AddChild in
+     the initial NewObject tag list — needs new_object_multi
+     because dict keys aren't unique.
 
 Layout: vertical LayoutGroup containing labeled Name/Age/Email/Notes
 fields + a horizontal button row (OK/Cancel).
@@ -45,77 +47,62 @@ def try_reaction():
     if not (hasattr(_amiga, "new_object_multi")
             and hasattr(_amiga, "do_method")
             and hasattr(_amiga, "WM_OPEN")):
+        print("try_reaction: _amiga missing required attrs", flush=True)
         return (None, 0)
 
-    try:
-        name = _amiga.new_object("string.gadget", {
-            "GA_ID": ID_NAME, "STRINGA_MaxChars": 40,
-            "STRINGA_TextVal": "", "LAYOUT_Label": "Name:",
-        })
-        age = _amiga.new_object("integer.gadget", {
-            "GA_ID": ID_AGE, "INTEGER_Number": 30,
-            "INTEGER_Minimum": 0, "INTEGER_Maximum": 200,
-            "LAYOUT_Label": "Age:",
-        })
-        email = _amiga.new_object("string.gadget", {
-            "GA_ID": ID_EMAIL, "STRINGA_MaxChars": 60,
-            "STRINGA_TextVal": "you@example.com",
-            "LAYOUT_Label": "Email:",
-        })
-        notes = _amiga.new_object("string.gadget", {
-            "GA_ID": ID_NOTES, "STRINGA_MaxChars": 120,
-            "STRINGA_TextVal": "", "LAYOUT_Label": "Notes:",
-        })
-        ok = _amiga.new_object("button.gadget", {
-            "GA_ID": ID_OK, "GA_Text": "OK", "GA_RelVerify": True,
-        })
-        cancel = _amiga.new_object("button.gadget", {
-            "GA_ID": ID_CANCEL, "GA_Text": "Cancel", "GA_RelVerify": True,
-        })
+    def _log(msg):
+        print(f"try_reaction: {msg}", flush=True)
 
-        button_row = _amiga.new_object_multi("layout.gadget", [
-            ("LAYOUT_Orientation", 0),
-            ("LAYOUT_AddChild", ok),
-            ("LAYOUT_AddChild", cancel),
-        ])
-        root = _amiga.new_object_multi("layout.gadget", [
-            ("LAYOUT_Orientation", 1),
-            ("LAYOUT_SpaceOuter", True),
-            ("LAYOUT_SpaceInner", True),
-            ("LAYOUT_AddChild", name),
-            ("LAYOUT_AddChild", age),
-            ("LAYOUT_AddChild", email),
-            ("LAYOUT_AddChild", notes),
-            ("LAYOUT_AddChild", button_row),
-        ])
-        # Open window.class via OpenClass (name-scanner is unreliable
-        # for this class specifically). Pass the resulting Class* into
-        # new_object.
-        window_cls = _amiga.open_class("window.class", 52)
-        win = _amiga.new_object(window_cls, {
-            "WA_Title":         "Python ReAction form",
-            "WA_DragBar":       True,
-            "WA_CloseGadget":   True,
-            "WA_DepthGadget":   True,
-            "WA_SizeGadget":    True,
-            "WA_Activate":      True,
-            "WA_IDCMP":         (_amiga.IDCMP_CLOSEWINDOW
-                                 | _amiga.IDCMP_GADGETUP
-                                 | _amiga.IDCMP_VANILLAKEY),
-            "WINDOW_Position":  0,               # WPOS_CENTERSCREEN
-            "WINDOW_ParentGroup": root,
+    try:
+        # Mirror refs/os4-sdk/base/Examples/GUI/Window/Window.c line
+        # by line. Simplest possible: one button, one layout, one
+        # window, WM_OPEN. Get *this* working first, then re-add the
+        # form gadgets.
+        _log("new_object button ...")
+        ok = _amiga.new_object("button.gadget", {
+            "GA_ID": ID_OK, "GA_Text": "Click Me",
+            "GA_RelVerify": True,
         })
-        # The critical fix — pass NULL as the WM_OPEN payload's
-        # second word.  Without it window.class reads stack garbage.
-        intuiwin = _amiga.do_method(win, _amiga.WM_OPEN, 0)
+        _log(f"  ok={hex(ok)}")
+
+        _log("new_object_multi layout ...")
+        root = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 1),         # LAYOUT_ORIENT_VERT
+            ("LAYOUT_SpaceOuter", True),
+            ("LAYOUT_AddChild", ok),
+        ])
+        _log(f"  root={hex(root)}")
+
+        _log("new_object window.class (string name, no OpenClass) ...")
+        win = _amiga.new_object_multi("window.class", [
+            # WA_ScreenTitle omitted — not in TAG_TABLE yet, dropping
+            # to prove the rest of the recipe. Add to _amigamodule.c
+            # in a later rebuild if we want a screen title.
+            ("WA_Title",       "Python ReAction"),
+            ("WA_Activate",    True),
+            ("WA_DepthGadget", True),
+            ("WA_DragBar",     True),
+            ("WA_CloseGadget", True),
+            ("WA_SizeGadget",  True),
+            ("WINDOW_Position", 4),            # WPOS_CENTERMOUSE
+            ("WINDOW_Layout",  root),          # <-- canonical tag
+        ])
+        _log(f"  win={hex(win)}")
+        if not win:
+            _log("new_object returned NULL — window.class not loaded?")
+            return (None, 0)
+
+        _log("do_method WM_OPEN (two args, no trailing) ...")
+        intuiwin = _amiga.do_method(win, _amiga.WM_OPEN)
+        _log(f"  intuiwin={hex(intuiwin)}")
         if not intuiwin:
-            print("try_reaction: WM_OPEN still returned 0.",
-                  flush=True)
+            _log("WM_OPEN returned 0 — dispose + fallback")
             _amiga.dispose_object(win)
             return (None, 0)
+        _log("window is OPEN — waiting for input")
         return (win, intuiwin)
     except Exception as e:
-        print(f"try_reaction: {type(e).__name__}: {e}", flush=True)
+        print(f"try_reaction: EXC {type(e).__name__}: {e}", flush=True)
         return (None, 0)
 
 
@@ -151,7 +138,7 @@ def main():
             if code == ID_CANCEL:
                 result = "Cancel"; break
 
-    _amiga.do_method(win, _amiga.WM_CLOSE, 0)
+    _amiga.do_method(win, _amiga.WM_CLOSE)
     _amiga.dispose_object(win)
     print(f"reaction_form: closed ({result or 'no action'})", flush=True)
     return 0

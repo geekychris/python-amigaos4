@@ -1244,9 +1244,31 @@ static const TagEntry TAG_TABLE[] = {
     {"WA_DragBar",      WA_DragBar},
     {"WA_SizeGadget",   WA_SizeGadget},
     {"WA_Activate",     WA_Activate},
+    {"WA_ScreenTitle",  WA_ScreenTitle},
+    {"WA_PubScreen",    WA_PubScreen},
+    {"WA_PubScreenName", WA_PubScreenName},
+    {"WA_GimmeZeroZero", WA_GimmeZeroZero},
+    {"WA_ReportMouse",  WA_ReportMouse},
+    {"WA_RMBTrap",      WA_RMBTrap},
+    {"WA_NoCareRefresh", WA_NoCareRefresh},
+    {"WA_MinWidth",     WA_MinWidth},
+    {"WA_MinHeight",    WA_MinHeight},
+    {"WA_MaxWidth",     WA_MaxWidth},
+    {"WA_MaxHeight",    WA_MaxHeight},
+    {"WA_InnerWidth",   WA_InnerWidth},
+    {"WA_InnerHeight",  WA_InnerHeight},
+    {"WA_Borderless",   WA_Borderless},
+    {"WA_Backdrop",     WA_Backdrop},
+    {"WA_Zoom",         WA_Zoom},
+    {"WA_MouseQueue",   WA_MouseQueue},
     {"WINDOW_Position", WINDOW_Position},
     {"WINDOW_Layout",   WINDOW_Layout},
     {"WINDOW_ParentGroup", WINDOW_ParentGroup},
+    {"WINDOW_AppPort",  WINDOW_AppPort},
+    {"WINDOW_Iconifiable", WINDOW_Iconifiable},
+    {"WINDOW_IconTitle", WINDOW_IconTitle},
+    {"WINDOW_MenuStrip", WINDOW_MenuStrip},
+    {"WINDOW_HelpText", WINDOW_HelpText},
     /* layout.gadget */
     {"LAYOUT_Orientation",  LAYOUT_Orientation},
     {"LAYOUT_AddChild",     LAYOUT_AddChild},
@@ -1293,8 +1315,11 @@ tag_lookup(PyObject *key)
     for (const TagEntry *t = TAG_TABLE; t->name; t++) {
         if (strcmp(t->name, name) == 0) return t->value;
     }
+    /* PyErr_Format doesn't accept %r for C strings — using %s so
+     * the actual missing tag name shows up instead of a bogus
+     * "invalid format string" SystemError. */
     PyErr_Format(PyExc_KeyError,
-                 "unknown tag name %r — extend TAG_TABLE in _amigamodule.c",
+                 "unknown tag name '%s' — extend TAG_TABLE in _amigamodule.c",
                  name);
     return 0;
 }
