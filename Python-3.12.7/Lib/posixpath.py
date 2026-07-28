@@ -147,29 +147,28 @@ splitext.__doc__ = genericpath._splitext.__doc__
 
 def splitdrive(p):
     """Split a pathname into drive and path.
-    On AmigaOS, volume/drive specifiers end with a colon (e.g. SYS:, System:).
+    On AmigaOS, volume/drive specifiers end with a colon (e.g. SYS:, System:, /System:).
     """
     p = os.fspath(p)
     if isinstance(p, str):
-        colon = p.find(':')
-        if colon > 0 and '/' not in p[:colon] and '\\' not in p[:colon]:
-            return p[:colon + 1], p[colon + 1:]
+        s = p.lstrip('/\\')
+        colon = s.find(':')
+        if colon > 0 and '/' not in s[:colon] and '\\' not in s[:colon]:
+            prefix_len = len(p) - len(s)
+            return p[prefix_len:prefix_len + colon + 1], s[colon + 1:]
     elif isinstance(p, bytes):
-        colon = p.find(b':')
-        if colon > 0 and b'/' not in p[:colon] and b'\\' not in p[:colon]:
-            return p[:colon + 1], p[colon + 1:]
+        s = p.lstrip(b'/\\')
+        colon = s.find(b':')
+        if colon > 0 and b'/' not in s[:colon] and b'\\' not in s[:colon]:
+            prefix_len = len(p) - len(s)
+            return p[prefix_len:prefix_len + colon + 1], s[colon + 1:]
     return p[:0], p
 
 
 def splitroot(p):
     """Split a pathname into drive, root and tail. On Posix, drive is always
     empty; the root may be empty, a single slash, or two slashes. The tail
-    contains anything after the root. For example:
-
-        splitroot('foo/bar') == ('', '', 'foo/bar')
-        splitroot('/foo/bar') == ('', '/', 'foo/bar')
-        splitroot('//foo/bar') == ('', '//', 'foo/bar')
-        splitroot('///foo/bar') == ('', '/', '//foo/bar')
+    contains anything after the root.
     """
     p = os.fspath(p)
     if isinstance(p, bytes):
@@ -178,6 +177,14 @@ def splitroot(p):
     else:
         sep = '/'
         empty = ''
+
+    drive, path = splitdrive(p)
+    if drive:
+        clean_drive = drive.lstrip(sep) if isinstance(drive, str) else drive.lstrip(b'/')
+        if path[:1] == sep:
+            return clean_drive, sep, path[1:]
+        return clean_drive, empty, path
+
     if p[:1] != sep:
         # Relative path, e.g.: 'foo'
         return empty, empty, p
@@ -185,8 +192,7 @@ def splitroot(p):
         # Absolute path, e.g.: '/foo', '///foo', '////foo', etc.
         return empty, sep, p[1:]
     else:
-        # Precisely two leading slashes, e.g.: '//foo'. Implementation defined per POSIX, see
-        # https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap04.html#tag_04_13
+        # Precisely two leading slashes, e.g.: '//foo'.
         return empty, p[:2], p[2:]
 
 
