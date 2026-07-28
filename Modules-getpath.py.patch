@@ -1,16 +1,14 @@
---- /dev/fd/12	2026-07-24 19:25:29
-+++ Python-3.12.7/Modules/getpath.py	2026-07-24 19:17:17
+--- Python-3.12.7/Modules/getpath.py.orig	2026-07-24 19:25:29
++++ Python-3.12.7/Modules/getpath.py	2026-07-28 04:58:00
 @@ -200,6 +200,25 @@
      DELIM = ';'
      SEP = '\\'
- 
+
 +elif os_name == 'amigaos':
 +    # AmigaOS uses ':' inside volume paths (DH1:foo), so it can't
 +    # double as a PYTHONPATH delimiter the way it does on POSIX.
 +    # Use ';' like Windows. SEP is '/' — Amiga accepts either dir
-+    # separator once we're past the volume name. Layout mirrors
-+    # the flat Windows convention (no `lib/` subdir), since we
-+    # ship python312.zip and everything else in one dir.
++    # separator once we're past the volume name.
 +    BUILDDIR_TXT = 'pybuilddir.txt'
 +    BUILD_LANDMARK = 'Modules/Setup.local'
 +    DEFAULT_PROGRAM_NAME = f'python{VERSION_MAJOR}'
@@ -23,6 +21,19 @@
 +    DELIM = ';'
 +    SEP = '/'
 +
- 
  # ******************************************************************************
  # HELPER FUNCTIONS (note that we prefer C functions for performance)
+@@ -605,6 +624,13 @@
+         if prefix and not stdlib_dir:
+             stdlib_dir = joinpath(prefix, STDLIB_SUBDIR)
+
++    if os_name == 'amigaos' and not prefix:
++        for candidate in ['python3:', 'Python3:', 'System/python3', 'System:python3', 'SYS:System/python3', 'DH1:python3', 'DH1:']:
++            if any(isfile(joinpath(candidate, f)) for f in STDLIB_LANDMARKS):
++                prefix = candidate
++                stdlib_dir = joinpath(prefix, STDLIB_SUBDIR)
++                break
++
+     if PREFIX and not prefix:
+         prefix = PREFIX
+         if not any(isfile(joinpath(prefix, f)) for f in STDLIB_LANDMARKS):

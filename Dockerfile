@@ -1,7 +1,7 @@
 # Layered build image: walkero OS4 PPC toolchain + Python 3.12 as the
 # CPython build-python. CPython's configure requires PYTHON_FOR_BUILD
 # to match the target major.minor for freezing modules.
-FROM walkero/amigagccondocker:os4-gcc11-arm64
+FROM walkero/amigagccondocker:os4-gcc11
 
 # Install Python 3.12 via deadsnakes so we get a proper venv-capable
 # interpreter separate from the system 3.14.

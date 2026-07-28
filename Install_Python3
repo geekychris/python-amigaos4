@@ -1,0 +1,54 @@
+; AmigaOS 4 Installer Script for Python 3.12.7
+; Standard AmigaOS Installer script format
+
+(language "english")
+
+(welcome
+  (text "Welcome to the Python 3.12.7 for AmigaOS 4.1 Installer.\n\n"
+        "This script will install:\n"
+        "  * Main executable to C:python3\n"
+        "  * Standard Library & files to SYS:System/python3\n"
+        "  * Persistent environment variables via SetEnv SAVE\n"
+        "  * Add 'Assign python3:' to S:User-Startup\n\n"
+        "Click Proceed to start installation.")
+)
+
+(set #target-c "C:")
+(set #target-sys "SYS:System/python3")
+
+(message "Step 1: Installing command executable...")
+
+(copyfiles
+  (prompt "Copying python3 to C:")
+  (source "C/python3")
+  (dest #target-c)
+  (help "Installs the python3 executable to C: so it can be run from any Shell.")
+)
+
+(message "Step 2: Installing Python 3 system library files...")
+
+(copydirs
+  (prompt "Copying Python 3 files to SYS:System/python3...")
+  (source "System/python3")
+  (dest #target-sys)
+  (help "Installs the Python 3 standard library, Amiga bindings, examples, and documentation.")
+)
+
+(message "Step 3: Configuring assignment in S:User-Startup & persistent environment variables...")
+
+(if (askbool
+      (prompt "Would you like to add 'Assign python3: SYS:System/python3' to S:User-Startup and save environment variables?")
+      (default 1)
+      (help "Adds 'Assign python3: SYS:System/python3' to S:User-Startup and sets persistent PYTHONHOME/PYTHONPATH in ENVARC:.")
+    )
+    (all
+      (run "SetEnv PYTHONHOME SAVE python3:")
+      (run "SetEnv PYTHONPATH SAVE python3:lib")
+      (startup "python3"
+        (prompt "Adding 'Assign python3: SYS:System/python3' to S:User-Startup...")
+        (command "; --- Python 3.12.7 for AmigaOS 4 ---\nAssign python3: SYS:System/python3\n; --- End Python 3 ---\n")
+      )
+    )
+)
+
+(message "Installation of Python 3.12.7 is complete!\n\nYou can now open a Shell and type:\n  python3 --version")

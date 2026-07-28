@@ -7,7 +7,7 @@
 # Usage: ./extract-newlib.sh [output-path]
 set -euo pipefail
 OUT="${1:-newlib.library}"
-IMAGE="walkero/amigagccondocker:os4-gcc11-arm64"
+IMAGE="walkero/amigagccondocker:os4-gcc11"
 docker run --rm -v "$(pwd):/host" "$IMAGE" \
     cp /opt/ppc-amigaos/ppc-amigaos/SDK/newlib/lib/libc.so "/host/$OUT"
 chmod 644 "$OUT"
