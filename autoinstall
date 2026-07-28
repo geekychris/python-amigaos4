@@ -3,6 +3,11 @@
 
 FailAt 21
 
+; Change working directory to the script's containing drawer
+If EXISTS PROGDIR:
+    CD PROGDIR:
+EndIf
+
 Echo "=========================================================="
 Echo " AmigaOS 4.1 AutoInstall - Python 3.12.7"
 Echo "=========================================================="
@@ -22,7 +27,7 @@ Else
         Copy python3 C:python3 FORCE CLONE >NIL:
         Echo "  -> Installed python3 -> C:python3"
     Else
-        Echo "  -> Notice: python3 binary not found in current directory."
+        Echo "  -> Notice: python3 binary not found in script drawer."
     EndIf
 EndIf
 
@@ -45,7 +50,7 @@ Else
         Copy #? SYS:System/python3/ ALL FORCE CLONE QUIET >NIL:
         Echo "  -> Installed files into SYS:System/python3"
     Else
-        Echo "  -> Notice: System/python3 directory not found."
+        Echo "  -> Notice: System/python3 directory not found in script drawer."
     EndIf
 EndIf
 

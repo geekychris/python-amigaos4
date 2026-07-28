@@ -2,6 +2,15 @@
 # For AmigaOS 4 Installation Utility
 from installer import *
 import os
+import sys
+
+# Change working directory to script drawer
+try:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir and os.path.exists(script_dir):
+        os.chdir(script_dir)
+except:
+    pass
 
 # --- Configuration ---
 app_name = "Python 3"
