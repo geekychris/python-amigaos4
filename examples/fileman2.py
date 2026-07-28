@@ -152,6 +152,12 @@ def main():
         ("LAYOUT_AddChild",    button_row),
     ])
 
+    # Request NEWSIZE events explicitly so the resize-handler below
+    # actually fires. Without WA_IDCMP the window defaults miss it.
+    idcmp = (_amiga.IDCMP_CLOSEWINDOW
+             | _amiga.IDCMP_GADGETUP
+             | _amiga.IDCMP_VANILLAKEY
+             | _amiga.IDCMP_NEWSIZE)
     win = _amiga.new_object_multi("window.class", [
         ("WA_ScreenTitle",  "Python File Manager v2 (ReAction)"),
         ("WA_Title",        f"{left.path}  |  {right.path}"),
@@ -160,6 +166,15 @@ def main():
         ("WA_DragBar",      True),
         ("WA_CloseGadget",  True),
         ("WA_SizeGadget",   True),
+        ("WA_IDCMP",        idcmp),
+        # Reasonable starting size + generous max so the user can
+        # stretch as far as their screen allows.
+        ("WA_InnerWidth",   600),
+        ("WA_InnerHeight",  400),
+        ("WA_MinWidth",     300),
+        ("WA_MinHeight",    200),
+        ("WA_MaxWidth",     0xFFFFFFFF),
+        ("WA_MaxHeight",    0xFFFFFFFF),
         ("WINDOW_Position", _amiga.WPOS_CENTERMOUSE),
         ("WINDOW_Layout",   root),
     ])
@@ -186,6 +201,16 @@ def main():
                 break
             if cls == _amiga.IDCMP_VANILLAKEY and code == 27:
                 break
+            if cls == _amiga.IDCMP_NEWSIZE:
+                # User resized the window — tell window.class to
+                # re-layout its children to the new client area.
+                # Without this, gadgets stay pinned to their
+                # NewObject-time geometry and the extra space is
+                # ignored.
+                # WM_RETHINK = 0x570006 (from classes/window.h);
+                # not yet exposed as _amiga.WM_RETHINK — pass raw.
+                _amiga.do_method(win, 0x570006)
+                continue
             if cls == _amiga.IDCMP_GADGETUP:
                 if code == 100:
                     print("fileman2: Copy — not wired yet", flush=True)
