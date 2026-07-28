@@ -7,23 +7,31 @@ model that _amiga.new_object / new_object_multi / do_method /
 lb_make_list wrap.
 
 Layout:
-    +---------------- window.class -----------------+
-    | HORIZ layout.gadget                            |
-    | +----- VERT -----+   +----- VERT -----+       |
-    | | left label     |   | right label    |       |
-    | | listbrowser    |   | listbrowser    |       |
-    | +----------------+   +----------------+       |
-    | HORIZ button row: Copy Move Delete Refresh Q  |
-    +------------------------------------------------+
+    +----- window.class (resizable, WM_RETHINK on NEWSIZE) -----+
+    | HORIZ layout.gadget                                        |
+    | +----- VERT -----+   +----- VERT -----+                   |
+    | | left listbrw   |   | right listbrw  |                   |
+    | +----------------+   +----------------+                   |
+    | HORIZ FixedVert: Set Copy Refresh MkBucket Quit           |
+    +------------------------------------------------------------+
 
-Both panes can be local paths or `s3://bucket/prefix` — see the
-Pane hierarchy in fileman.py (LocalPane, S3Pane). fileman2 reuses
-that model verbatim; only the render layer changes.
+Both panes can be local paths OR `s3://[bucket[/prefix]]`. Env
+vars set the initial targets and S3 creds:
 
-Env vars:
     S3_ENDPOINT / S3_ACCESS / S3_SECRET / S3_INSECURE  — S3 config
     FILEMAN2_LEFT   — initial left  path (default SYS:)
     FILEMAN2_RIGHT  — initial right path (default DH1:)
+
+For the local MinIO on the host, `execute DH1:s3cli/s3-env-local`
+then set FILEMAN2_RIGHT to `s3://` and rerun to browse buckets.
+
+Buttons:
+  Set       — prompt for a new path for the focused pane
+  Copy      — read selected file from focused pane, write to other
+  Refresh   — re-list both panes
+  MkBucket  — when focused pane is on `s3://` (bucket list), prompt
+              for a name and create the bucket
+  Quit      — close
 """
 import os
 import sys
@@ -36,6 +44,17 @@ import _amiga
 # Reuse pane model from fileman v1.
 sys.path.insert(0, "DH1:pytests/examples")
 import fileman as _fm
+
+
+# ---------------------------------------------------------------- IDs
+
+ID_LB_LEFT     = 10
+ID_LB_RIGHT    = 11
+ID_BTN_SET     = 100
+ID_BTN_COPY    = 101
+ID_BTN_REFRESH = 102
+ID_BTN_MKB     = 103
+ID_BTN_QUIT    = 104
 
 
 # ---------------------------------------------------------------- pane wiring
@@ -54,13 +73,10 @@ def _refresh_lb(pane, lb_handle, list_slot, win_handle=0):
 
     win_handle is passed to set_attrs so the listbrowser knows which
     window to redraw itself in — 0 works pre-open, real handle after
-    WM_OPEN. Frees the previous list (if any) and installs a new one.
-    list_slot is a one-item list holding the current list handle so
-    we can free/replace across refreshes."""
+    WM_OPEN."""
     rows = _rows_from_pane(pane)
     new_list = _amiga.lb_make_list(rows)
-    # Detach old list before freeing, otherwise the listbrowser
-    # will try to redraw freed nodes.
+    # Detach old list before freeing to avoid a redraw on freed nodes.
     _amiga.set_attrs(lb_handle, {"LISTBROWSER_Labels": 0}, win_handle)
     if list_slot[0]:
         try:
@@ -72,53 +88,70 @@ def _refresh_lb(pane, lb_handle, list_slot, win_handle=0):
                     win_handle)
 
 
+# ---------------------------------------------------------------- dialogs
+
+def _prompt(title, label, default="", maxlen=200):
+    if not hasattr(_amiga, "open_dialog"):
+        return default
+    h = _amiga.open_dialog(title=title,
+                            fields=[(label, default, maxlen)],
+                            ok_label="OK", cancel_label="Cancel",
+                            left=200, top=140)
+    try:
+        r = _amiga.run_dialog(h)
+    finally:
+        _amiga.close_dialog(h)
+    if r is None:
+        return None
+    return r.get(label, default)
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     left_spec  = os.environ.get("FILEMAN2_LEFT",  "SYS:")
     right_spec = os.environ.get("FILEMAN2_RIGHT", "DH1:")
 
-    # Panes provide entries + read_file / write_file / etc. We only
-    # use their entries here — the actual file-op wiring lives in
-    # fileman.py and can be pulled in in a later iteration.
     class _R: pass
     r = _R(); r.x1=r.y1=r.x2=r.y2=0
     r.w=lambda: 0; r.h=lambda: 0; r.contains=lambda x,y: False
-    left  = _fm.make_pane(left_spec,  r, r)
-    right = _fm.make_pane(right_spec, r, r)
+    panes = {
+        "left":    _fm.make_pane(left_spec,  r, r),
+        "right":   _fm.make_pane(right_spec, r, r),
+        "focused": "left",
+    }
 
-    # Two panes' listbrowsers each need their own row list.
     left_list_slot  = [None]
     right_list_slot = [None]
 
-    # Build column info once — shared by both listbrowsers.
+    # Column info once — shared by both listbrowsers.
     cols = _amiga.lb_make_columns([("Name", 200), ("Size", 80)])
 
     left_lb = _amiga.new_object_multi("listbrowser.gadget", [
-        ("GA_ID",                  10),
+        ("GA_ID",                  ID_LB_LEFT),
+        ("GA_RelVerify",           True),      # send GADGETUP on click
         ("LISTBROWSER_ColumnInfo", cols),
     ])
     right_lb = _amiga.new_object_multi("listbrowser.gadget", [
-        ("GA_ID",                  11),
+        ("GA_ID",                  ID_LB_RIGHT),
+        ("GA_RelVerify",           True),
         ("LISTBROWSER_ColumnInfo", cols),
     ])
 
-    _refresh_lb(left,  left_lb,  left_list_slot)
-    _refresh_lb(right, right_lb, right_list_slot)
+    _refresh_lb(panes["left"],  left_lb,  left_list_slot)
+    _refresh_lb(panes["right"], right_lb, right_list_slot)
 
-    left_label  = _amiga.new_object("label.image", {"LABEL_Text": left.path})
-    right_label = _amiga.new_object("label.image", {"LABEL_Text": right.path})
+    # Buttons — ID_BTN_* values feed the GADGETUP dispatch below.
+    def _mkbtn(bid, label):
+        return _amiga.new_object("button.gadget",
+                                  {"GA_ID": bid, "GA_Text": label,
+                                   "GA_RelVerify": True})
 
-    # Buttons — IDs used by GADGETUP dispatch (below).
-    b_copy    = _amiga.new_object("button.gadget",
-                                   {"GA_ID": 100, "GA_Text": "Copy",
-                                    "GA_RelVerify": True})
-    b_refresh = _amiga.new_object("button.gadget",
-                                   {"GA_ID": 101, "GA_Text": "Refresh",
-                                    "GA_RelVerify": True})
-    b_quit    = _amiga.new_object("button.gadget",
-                                   {"GA_ID": 102, "GA_Text": "Quit",
-                                    "GA_RelVerify": True})
+    b_set     = _mkbtn(ID_BTN_SET,     "Set")
+    b_copy    = _mkbtn(ID_BTN_COPY,    "Copy")
+    b_refresh = _mkbtn(ID_BTN_REFRESH, "Refresh")
+    b_mkb     = _mkbtn(ID_BTN_MKB,     "MkBucket")
+    b_quit    = _mkbtn(ID_BTN_QUIT,    "Quit")
 
     left_pane_layout = _amiga.new_object_multi("layout.gadget", [
         ("LAYOUT_Orientation", _amiga.LAYOUT_ORIENT_VERT),
@@ -136,43 +169,55 @@ def main():
         ("LAYOUT_AddChild",    left_pane_layout),
         ("LAYOUT_AddChild",    right_pane_layout),
     ])
+    # Button row height is controlled by CHILD_WeightedHeight=0 on
+    # the parent's LAYOUT_AddChild for this row (see root layout
+    # below) — LAYOUT_FixedVert doesn't do what its name suggests
+    # here.
     button_row = _amiga.new_object_multi("layout.gadget", [
         ("LAYOUT_Orientation", _amiga.LAYOUT_ORIENT_HORIZ),
         ("LAYOUT_SpaceInner",  True),
+        ("LAYOUT_EvenSize",    True),          # buttons same width
+        ("LAYOUT_AddChild",    b_set),
         ("LAYOUT_AddChild",    b_copy),
         ("LAYOUT_AddChild",    b_refresh),
+        ("LAYOUT_AddChild",    b_mkb),
         ("LAYOUT_AddChild",    b_quit),
     ])
+    # CHILD_WeightedHeight (raw 0x85007106 = LAYOUT_Dummy+0x100+6, from
+    # gadgets/layout.h) is a per-child sizing hint that layout.gadget
+    # reads immediately after the LAYOUT_AddChild it follows. Default
+    # is 100; 0 means "lock this child at its minimum height and give
+    # all extra vertical space to siblings." That's what makes the
+    # button row stay one-row-tall instead of eating half the window.
+    _CHILD_WeightedHeight = 0x85007106
     root = _amiga.new_object_multi("layout.gadget", [
         ("LAYOUT_Orientation", _amiga.LAYOUT_ORIENT_VERT),
         ("LAYOUT_SpaceOuter",  True),
         ("LAYOUT_SpaceInner",  True),
         ("LAYOUT_DeferLayout", True),
         ("LAYOUT_AddChild",    panes_row),
+        (_CHILD_WeightedHeight, 100),          # panes_row: absorb space
         ("LAYOUT_AddChild",    button_row),
+        (_CHILD_WeightedHeight, 0),            # button_row: min height
     ])
 
-    # Request NEWSIZE events explicitly so the resize-handler below
-    # actually fires. Without WA_IDCMP the window defaults miss it.
     idcmp = (_amiga.IDCMP_CLOSEWINDOW
              | _amiga.IDCMP_GADGETUP
              | _amiga.IDCMP_VANILLAKEY
              | _amiga.IDCMP_NEWSIZE)
     win = _amiga.new_object_multi("window.class", [
         ("WA_ScreenTitle",  "Python File Manager v2 (ReAction)"),
-        ("WA_Title",        f"{left.path}  |  {right.path}"),
+        ("WA_Title",        f"{panes['left'].path}  |  {panes['right'].path}"),
         ("WA_Activate",     True),
         ("WA_DepthGadget",  True),
         ("WA_DragBar",      True),
         ("WA_CloseGadget",  True),
         ("WA_SizeGadget",   True),
         ("WA_IDCMP",        idcmp),
-        # Reasonable starting size + generous max so the user can
-        # stretch as far as their screen allows.
-        ("WA_InnerWidth",   600),
+        ("WA_InnerWidth",   700),
         ("WA_InnerHeight",  400),
-        ("WA_MinWidth",     300),
-        ("WA_MinHeight",    200),
+        ("WA_MinWidth",     400),
+        ("WA_MinHeight",    250),
         ("WA_MaxWidth",     0xFFFFFFFF),
         ("WA_MaxHeight",    0xFFFFFFFF),
         ("WINDOW_Position", _amiga.WPOS_CENTERMOUSE),
@@ -189,8 +234,128 @@ def main():
         return 1
     print(f"fileman2: window @ {hex(intuiwin)}", flush=True)
 
-    # Event loop — very simple. Every WM_HANDLEINPUT call returns a
-    # class + code; we dispatch on class.
+    # Handles indexed by side for GADGETUP dispatch on the listbrowser.
+    lb_by_id  = {ID_LB_LEFT: ("left",  left_lb,  left_list_slot),
+                 ID_LB_RIGHT: ("right", right_lb, right_list_slot)}
+
+    def _current_pane():
+        return panes[panes["focused"]]
+
+    def _other_pane():
+        return panes["right" if panes["focused"] == "left" else "left"]
+
+    def _current_lb_info():
+        side = panes["focused"]
+        return (left_lb, left_list_slot) if side == "left" \
+               else (right_lb, right_list_slot)
+
+    # LISTBROWSER_Selected — not yet in TAG_TABLE. Raw value from
+    # gadgets/listbrowser.h: LISTBROWSER_Dummy(0x85003000) + 4.
+    _LISTBROWSER_SELECTED = 0x85003004
+
+    def _get_selected_row_index(lb_handle):
+        """Query the currently selected row index via GetAttr.
+        Returns -1 if nothing selected."""
+        idx = _amiga.get_attr(lb_handle, _LISTBROWSER_SELECTED)
+        # Normalise: unsigned ~0 (all bits set) becomes 0xffffffff
+        return -1 if idx == 0xffffffff else int(idx)
+
+    def _selected_entry():
+        pane = _current_pane()
+        lb, _slot = _current_lb_info()
+        idx = _get_selected_row_index(lb)
+        if 0 <= idx < len(pane.entries):
+            return pane.entries[idx]
+        return None
+
+    def _do_copy():
+        pane = _current_pane()
+        dst  = _other_pane()
+        e = _selected_entry()
+        if not e:
+            print("copy: nothing selected", flush=True); return
+        name, is_dir, _sz, _mt = e
+        if is_dir or name == "..":
+            print(f"copy: skipping directory-like {name!r}", flush=True); return
+        try:
+            data = pane.read_file(name)
+            dst.write_file(name, data)
+            print(f"copy: {len(data)}b -> {dst.path}/{name}", flush=True)
+            _refresh_lb(dst,
+                         right_lb if panes["focused"] == "left" else left_lb,
+                         right_list_slot if panes["focused"] == "left" else left_list_slot,
+                         intuiwin)
+        except Exception as e:
+            print(f"copy failed: {type(e).__name__}: {e}", flush=True)
+
+    def _do_set_path():
+        pane = _current_pane()
+        new = _prompt("Set pane path",
+                      "path (DH1: or s3:// or s3://bucket)",
+                      pane.path, 200)
+        if not new or new == pane.path:
+            return
+        try:
+            new_pane = _fm.make_pane(new.strip(), r, r)
+            panes[panes["focused"]] = new_pane
+            side = panes["focused"]
+            lb   = left_lb  if side == "left" else right_lb
+            slot = left_list_slot if side == "left" else right_list_slot
+            _refresh_lb(new_pane, lb, slot, intuiwin)
+            print(f"set: {side} pane -> {new_pane.path}", flush=True)
+        except Exception as e:
+            print(f"set failed: {type(e).__name__}: {e}", flush=True)
+
+    def _do_mkbucket():
+        pane = _current_pane()
+        if not pane.path.startswith("s3:"):
+            print("mkbucket: focused pane isn't S3", flush=True); return
+        # Only meaningful when pane is on `s3://` (bucket list level).
+        # If it's inside a bucket, still allow creating a top-level
+        # bucket — S3 buckets are flat.
+        name = _prompt("Make S3 bucket",
+                       "bucket name (lowercase, no /)", "", 63)
+        if not name or not name.strip():
+            return
+        try:
+            client = _fm._s3_client_from_env()
+            client.make_bucket(name.strip())
+            print(f"mkbucket: created {name!r}", flush=True)
+            # If the pane is on s3://, refresh it to show new bucket.
+            if pane.path.rstrip("/") in ("s3:", "s3://"):
+                pane.refresh()
+                side = panes["focused"]
+                lb   = left_lb  if side == "left" else right_lb
+                slot = left_list_slot if side == "left" else right_list_slot
+                _refresh_lb(pane, lb, slot, intuiwin)
+        except Exception as e:
+            print(f"mkbucket failed: {type(e).__name__}: {e}", flush=True)
+
+    def _do_refresh():
+        panes["left"].refresh()
+        panes["right"].refresh()
+        _refresh_lb(panes["left"],  left_lb,  left_list_slot,  intuiwin)
+        _refresh_lb(panes["right"], right_lb, right_list_slot, intuiwin)
+        print("refreshed", flush=True)
+
+    def _handle_lb_click(gid):
+        """Listbrowser row-click — mark that pane as focused and
+        query which row is selected. Note: listbrowser fires
+        IDCMP_GADGETUP on release, and the row index is NOT in the
+        IntuiMessage's code field — we have to GetAttr
+        LISTBROWSER_Selected."""
+        if gid not in lb_by_id:
+            return
+        side, lb, _slot = lb_by_id[gid]
+        panes["focused"] = side
+        pane = _current_pane()
+        row = _get_selected_row_index(lb)
+        if 0 <= row < len(pane.entries):
+            e = pane.entries[row]
+            print(f"select: {side}[{row}] = {e[0]!r}", flush=True)
+        else:
+            print(f"select: {side} (no row)", flush=True)
+
     try:
         while True:
             ev = _amiga.wait_message(intuiwin, 5.0)
@@ -202,25 +367,16 @@ def main():
             if cls == _amiga.IDCMP_VANILLAKEY and code == 27:
                 break
             if cls == _amiga.IDCMP_NEWSIZE:
-                # User resized the window — tell window.class to
-                # re-layout its children to the new client area.
-                # Without this, gadgets stay pinned to their
-                # NewObject-time geometry and the extra space is
-                # ignored.
-                # WM_RETHINK = 0x570006 (from classes/window.h);
-                # not yet exposed as _amiga.WM_RETHINK — pass raw.
+                # WM_RETHINK = 0x570006 (from classes/window.h).
                 _amiga.do_method(win, 0x570006)
                 continue
             if cls == _amiga.IDCMP_GADGETUP:
-                if code == 100:
-                    print("fileman2: Copy — not wired yet", flush=True)
-                elif code == 101:
-                    left.refresh(); right.refresh()
-                    _refresh_lb(left,  left_lb,  left_list_slot)
-                    _refresh_lb(right, right_lb, right_list_slot)
-                    print("fileman2: refreshed", flush=True)
-                elif code == 102:
-                    break
+                if code == ID_BTN_SET:      _do_set_path()
+                elif code == ID_BTN_COPY:   _do_copy()
+                elif code == ID_BTN_REFRESH: _do_refresh()
+                elif code == ID_BTN_MKB:    _do_mkbucket()
+                elif code == ID_BTN_QUIT:   break
+                elif code in lb_by_id:      _handle_lb_click(code)
     finally:
         _amiga.do_method(win, _amiga.WM_CLOSE)
         _amiga.dispose_object(win)

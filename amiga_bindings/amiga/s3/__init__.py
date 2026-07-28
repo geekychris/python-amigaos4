@@ -340,6 +340,21 @@ class S3Client:
         if st not in (200, 204):
             raise _parse_error(st, body)
 
+    def make_bucket(self, name: str) -> None:
+        """PUT /<name>/ — create a new bucket. Raises S3Error if the
+        bucket already exists (409 BucketAlreadyExists) or the name
+        is invalid."""
+        st, _, body = self._request("PUT", f"/{name}", None, b"")
+        if st not in (200, 204):
+            raise _parse_error(st, body)
+
+    def remove_bucket(self, name: str) -> None:
+        """DELETE /<name>/ — remove an empty bucket. Raises S3Error
+        if the bucket isn't empty (409 BucketNotEmpty)."""
+        st, _, body = self._request("DELETE", f"/{name}", None, b"")
+        if st not in (200, 204):
+            raise _parse_error(st, body)
+
 
 # ----------------------------------------------------------------- convenience
 
