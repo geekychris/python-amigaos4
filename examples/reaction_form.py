@@ -66,26 +66,33 @@ def try_reaction():
         _log(f"  ok={hex(ok)}")
 
         _log("new_object_multi layout ...")
+        # LAYOUT_DeferLayout=1 tells the layout: don't compute geometry
+        # until WM_OPEN asks for it. Without this, layout tries to size
+        # itself at NewObject time before it has a screen context, and
+        # WM_OPEN's later resize step fails. The SDK Window.c example
+        # uses this flag.
         root = _amiga.new_object_multi("layout.gadget", [
             ("LAYOUT_Orientation", 1),         # LAYOUT_ORIENT_VERT
             ("LAYOUT_SpaceOuter", True),
+            # LAYOUT_DeferLayout = LAYOUT_Dummy+26 = 0x85007000+26
+            # not yet in _amigamodule.c TAG_TABLE — pass as int to
+            # skip a rebuild while debugging.
+            (0x8500701a, True),
             ("LAYOUT_AddChild", ok),
         ])
         _log(f"  root={hex(root)}")
 
-        _log("new_object window.class (string name, no OpenClass) ...")
+        _log("new_object window.class — MINIMAL: no layout, hard size")
         win = _amiga.new_object_multi("window.class", [
-            # WA_ScreenTitle omitted — not in TAG_TABLE yet, dropping
-            # to prove the rest of the recipe. Add to _amigamodule.c
-            # in a later rebuild if we want a screen title.
             ("WA_Title",       "Python ReAction"),
             ("WA_Activate",    True),
             ("WA_DepthGadget", True),
             ("WA_DragBar",     True),
             ("WA_CloseGadget", True),
-            ("WA_SizeGadget",  True),
-            ("WINDOW_Position", 4),            # WPOS_CENTERMOUSE
-            ("WINDOW_Layout",  root),          # <-- canonical tag
+            ("WA_Left",   100),
+            ("WA_Top",    100),
+            ("WA_Width",  300),
+            ("WA_Height", 100),
         ])
         _log(f"  win={hex(win)}")
         if not win:
@@ -109,8 +116,10 @@ def try_reaction():
 def main():
     win, intuiwin = try_reaction()
     if not win:
-        print("reaction_form: ReAction path unavailable — using "
-              "open_dialog form instead.", flush=True)
+        print("reaction_form: ReAction path failed. Fallback DISABLED "
+              "during debug — set _amiga.debug_reaction_fallback=1 to "
+              "restore.", flush=True)
+        return 1
         result = fallback_dialog()
         if result is None:
             print("reaction_form: cancelled.", flush=True)

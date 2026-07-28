@@ -1268,7 +1268,6 @@ static const TagEntry TAG_TABLE[] = {
     {"WINDOW_Iconifiable", WINDOW_Iconifiable},
     {"WINDOW_IconTitle", WINDOW_IconTitle},
     {"WINDOW_MenuStrip", WINDOW_MenuStrip},
-    {"WINDOW_HelpText", WINDOW_HelpText},
     /* layout.gadget */
     {"LAYOUT_Orientation",  LAYOUT_Orientation},
     {"LAYOUT_AddChild",     LAYOUT_AddChild},
