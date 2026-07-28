@@ -22,7 +22,7 @@ Usage:
   python3 python3:examples/s3_demo.py list      — buckets only
   python3 python3:examples/s3_demo.py --keep    — don't delete
 """
-import sys
+import sys, os
 import time
 import uuid
 

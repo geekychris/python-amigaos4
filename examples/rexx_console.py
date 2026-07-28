@@ -19,7 +19,7 @@ is one round-trip.
 Requires _amiga with rexx_send/rexx_execute/list_rexx_ports (added in
 the ARexx-support patch).
 """
-import sys
+import sys, os
 import time
 
 # Prefer our packaged bindings over any stub in the default path.

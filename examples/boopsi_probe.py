@@ -15,7 +15,7 @@ If you want *visible* BOOPSI widgets, the current state is:
     - Getting a fully-rendered ReAction window from Python needs
       one more _amiga entry point + a bigger reaction_form rewrite.
 """
-import sys
+import sys, os
 for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
     if os.path.exists(_p) and _p not in sys.path:
         sys.path.insert(0, _p)

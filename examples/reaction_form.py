@@ -16,7 +16,7 @@ fields + a horizontal button row (OK/Cancel).
 If the BOOPSI path still fails on this build, falls back to
 _amiga.open_dialog so you always get a usable form.
 """
-import sys
+import sys, os
 for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
     if os.path.exists(_p) and _p not in sys.path:
         sys.path.insert(0, _p)

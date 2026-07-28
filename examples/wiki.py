@@ -9,7 +9,7 @@ Usage:
     python3 python3:examples/wiki.py "Alan Turing"
     python3 python3:examples/wiki.py python (programming language)
 """
-import sys, json, textwrap
+import sys, os, json, textwrap
 for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
     if os.path.exists(_p) and _p not in sys.path:
         sys.path.insert(0, _p)

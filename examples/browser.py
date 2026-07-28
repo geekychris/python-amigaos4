@@ -17,7 +17,7 @@ The goal is to show that a real HTTP client + parser stack runs on
 sam460ex/newlib, driving a real Intuition window.
 """
 import io
-import sys
+import sys, os
 import time
 
 for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
