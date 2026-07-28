@@ -151,6 +151,8 @@ def _prompt(title, label, default="", maxlen=200):
 def main():
     left_spec  = os.environ.get("FILEMAN2_LEFT",  "SYS:")
     right_spec = os.environ.get("FILEMAN2_RIGHT", "DH1:")
+    if not right_spec.startswith("s3://") and not os.path.exists(right_spec):
+        right_spec = "SYS:"
 
     class _R: pass
     r = _R(); r.x1=r.y1=r.x2=r.y2=0
