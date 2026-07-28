@@ -77,7 +77,13 @@ def post_install():
         except:
             pass
 
-    # 2. Create persistent environment variables if missing
+    # 2. Set script protection bit (+s) on bin helper tools
+    try:
+        os.system("Protect SYS:System/python3/bin/#? +s +e >NIL:")
+    except:
+        pass
+
+    # 3. Create persistent environment variables if missing
     if not env_present:
         try:
             os.system("SetEnv PYTHONHOME SAVE python3:")

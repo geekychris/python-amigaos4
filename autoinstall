@@ -55,13 +55,20 @@ Else
 EndIf
 
 Echo ""
-Echo "Step 3: Setting persistent environment variables..."
+Echo "Step 3: Setting script protection bits on helper tools..."
+If EXISTS SYS:System/python3/bin
+    Protect SYS:System/python3/bin/#? +s +e >NIL:
+    Echo "  -> Set script protection bit (+s) on SYS:System/python3/bin/ tools"
+EndIf
+
+Echo ""
+Echo "Step 4: Setting persistent environment variables..."
 SetEnv PYTHONHOME SAVE python3: >NIL:
 SetEnv PYTHONPATH SAVE python3:lib >NIL:
 Echo "  -> Set persistent PYTHONHOME and PYTHONPATH in ENVARC:"
 
 Echo ""
-Echo "Step 4: Validating and configuring system assigns and path..."
+Echo "Step 5: Validating and configuring system assigns and path..."
 If EXISTS python3:
     Echo "  -> Assign 'python3:' is active."
 Else
