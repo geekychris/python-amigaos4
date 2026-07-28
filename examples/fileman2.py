@@ -194,15 +194,23 @@ S3_PROFILES_FILE = "ENVARC:s3-profiles.json"
 
 def _profiles_load():
     """Read the profiles file; return dict {name: {k: v}}.
-    Empty dict if the file doesn't exist yet."""
+    On first run (empty file) seed one profile from the current env
+    vars — usually populated by s3-env-local — so the user has
+    something to Edit / Activate immediately."""
     import json
     try:
         with open(S3_PROFILES_FILE, "r") as f:
             data = json.load(f)
-        if isinstance(data, dict):
+        if isinstance(data, dict) and data:
             return data
     except (FileNotFoundError, OSError, ValueError):
         pass
+    # Seed if we have live creds in ENV: (typical from s3-env-local)
+    ep = os.environ.get("S3_ENDPOINT", "")
+    if ep:
+        seed = {k: os.environ.get(k, "") for k in S3_CONFIG_KEYS}
+        name = "minio-local" if "10.0.2.2" in ep else "default"
+        return {name: seed}
     return {}
 
 
@@ -310,12 +318,12 @@ def main():
                                   {"GA_ID": bid, "GA_Text": label,
                                    "GA_RelVerify": True})
 
-    b_set     = _mkbtn(ID_BTN_SET,     "Set")
+    b_set     = _mkbtn(ID_BTN_SET,     "Source")
     b_copy    = _mkbtn(ID_BTN_COPY,    "Copy")
     b_delete  = _mkbtn(ID_BTN_DELETE,  "Delete")
     b_refresh = _mkbtn(ID_BTN_REFRESH, "Refresh")
-    b_mkb     = _mkbtn(ID_BTN_MKB,     "MkBucket")
-    b_config  = _mkbtn(ID_BTN_CONFIG,  "S3 Config")
+    b_mkb     = _mkbtn(ID_BTN_MKB,     "New Bucket")
+    b_config  = _mkbtn(ID_BTN_CONFIG,  "S3 Servers")
     b_quit    = _mkbtn(ID_BTN_QUIT,    "Quit")
 
     left_pane_layout = _amiga.new_object_multi("layout.gadget", [
@@ -527,15 +535,186 @@ def main():
                       flush=True)
         print(f"== _do_copy: done ({ok} files copied)", flush=True)
 
-    def _do_set_path():
-        pane = _current_pane()
-        new = _prompt("Set pane path",
-                      "path (DH1: or s3:// or s3://bucket)",
-                      pane.path, 200)
-        if not new or new == pane.path:
-            return
+    def _enum_sources():
+        """Build the picker's source list. Returns list of
+        (display_name, target_path) tuples. Local volumes first, then
+        S3 buckets on the currently-active profile."""
+        sources = []
+        # Local volumes — os.listdir('/') on OS4 returns all mounted
+        # volumes and assigns as top-level entries.
         try:
-            new_pane = _fm.make_pane(new.strip(), r, r)
+            for name in sorted(os.listdir("/")):
+                if not name:
+                    continue
+                path = name + ":" if not name.endswith(":") else name
+                sources.append((f"Local: {path}", path))
+        except Exception as e:
+            print(f"enum_sources: listdir(/) failed: {e}", flush=True)
+        # S3 buckets on the ACTIVE profile.
+        try:
+            active_ep = os.environ.get("S3_ENDPOINT", "")
+            if active_ep:
+                # Figure out the active profile's NAME (for the label)
+                profiles = _profiles_load()
+                active_name = "?"
+                for n, cfg in profiles.items():
+                    if cfg.get("S3_ENDPOINT") == active_ep:
+                        active_name = n; break
+                # Always include the bucket-list root.
+                sources.append((f"S3 [{active_name}]: (bucket list)", "s3://"))
+                client = _fm._s3_client_from_env()
+                with _Busy():
+                    for b in client.list_buckets():
+                        sources.append(
+                            (f"S3 [{active_name}]: {b['name']}",
+                             f"s3://{b['name']}"))
+        except Exception as e:
+            import traceback
+            print(f"enum_sources: S3 list failed: {e}\n"
+                  f"{traceback.format_exc()}", flush=True)
+        return sources
+
+    # Button IDs for the source picker (scoped to that window).
+    _SP_LB     = 400
+    _SP_OPEN   = 401
+    _SP_MANUAL = 402
+    _SP_CLOSE  = 403
+
+    def _pick_source():
+        """Open a picker with all available data sources for the
+        focused pane. Double-click a row OR Open button: switch the
+        pane. Manual button: fall back to typing a path. Close:
+        cancel."""
+        sources = _enum_sources()
+        if not sources:
+            # Fall back to plain prompt if we couldn't enumerate.
+            return _do_set_path_prompt()
+        rows = [[label, path] for label, path in sources]
+        cols = _amiga.lb_make_columns([("Source", 3), ("Path", 2)])
+        list_slot = [_amiga.lb_make_list(rows)]
+
+        lb = _amiga.new_object_multi("listbrowser.gadget", [
+            ("GA_ID", _SP_LB),
+            ("GA_RelVerify",            True),
+            ("LISTBROWSER_ColumnInfo",  cols),
+            ("LISTBROWSER_Labels",      list_slot[0]),
+            (0x85003010, False),   # AutoFit
+            (0x85003012, True),    # ShowSelected
+            (0x85003011, False),   # ColumnTitles
+        ])
+
+        def _mkb(bid, label):
+            return _amiga.new_object("button.gadget",
+                {"GA_ID": bid, "GA_Text": label, "GA_RelVerify": True})
+
+        b_open   = _mkb(_SP_OPEN,   "Open")
+        b_manual = _mkb(_SP_MANUAL, "Custom path...")
+        b_close  = _mkb(_SP_CLOSE,  "Cancel")
+
+        _CHILD_WH = 0x85007106
+        btn_row = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 0),
+            ("LAYOUT_SpaceInner",  True),
+            ("LAYOUT_EvenSize",    True),
+            ("LAYOUT_AddChild",    b_open),
+            ("LAYOUT_AddChild",    b_manual),
+            ("LAYOUT_AddChild",    b_close),
+        ])
+        root = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 1),
+            ("LAYOUT_SpaceInner",  True),
+            ("LAYOUT_AddChild",    lb),
+            ("LAYOUT_AddChild",    btn_row),
+            (_CHILD_WH,            0),
+        ])
+        win = _amiga.new_object_multi("window.class", [
+            ("WA_Title",       f"Choose source for {panes['focused']} pane"),
+            ("WA_ScreenTitle", "fileman2 source picker"),
+            ("WA_Activate",    True),
+            ("WA_DragBar",     True),
+            ("WA_CloseGadget", True),
+            ("WA_SizeGadget",  True),
+            ("WA_InnerWidth",  480),
+            ("WA_InnerHeight", 240),
+            ("WINDOW_Position", _amiga.WPOS_CENTERMOUSE),
+            ("WINDOW_Layout",  root),
+        ])
+        if _amiga.do_method(win, _amiga.WM_OPEN) == 0:
+            _amiga.dispose_object(win)
+            return None
+        piw = _amiga.get_attr(win, 0x81021001)
+
+        picked = [None]  # closure return
+
+        def _selected_source():
+            idx = _amiga.get_attr(lb, 0x85003004)
+            if idx == 0xffffffff: return None
+            if 0 <= idx < len(sources): return sources[idx][1]
+            return None
+
+        WMHI_CLASSMASK  = 0xFFFF0000
+        WMHI_GADGETMASK = 0x0000FFFF
+        WMHI_CLOSE      = 1  << 16
+        WMHI_GADGETUP   = 2  << 16
+        stop = False
+        _LISTBROWSER_RelEvent = 0x85003025
+        LBRE_DOUBLECLICK      = 16
+        try:
+            while not stop:
+                drained = False
+                while True:
+                    r = _amiga.wm_handleinput(win)
+                    if r is None: break
+                    drained = True
+                    result, _code = r
+                    cls, gid = (result & WMHI_CLASSMASK,
+                                result & WMHI_GADGETMASK)
+                    if cls == WMHI_CLOSE:
+                        stop = True; break
+                    if cls != WMHI_GADGETUP: continue
+                    if gid == _SP_CLOSE:
+                        stop = True; break
+                    if gid == _SP_MANUAL:
+                        p = _prompt("Custom path", "Path",
+                                    _current_pane().path, 200)
+                        if p:
+                            picked[0] = p.strip()
+                        stop = True; break
+                    if gid == _SP_OPEN:
+                        picked[0] = _selected_source()
+                        if picked[0]:
+                            stop = True; break
+                    if gid == _SP_LB:
+                        # Double-click a row = immediate pick
+                        rel = _amiga.get_attr(lb, _LISTBROWSER_RelEvent)
+                        if rel == LBRE_DOUBLECLICK:
+                            picked[0] = _selected_source()
+                            if picked[0]:
+                                stop = True; break
+                if not drained:
+                    time.sleep(0.03)
+        finally:
+            _amiga.do_method(win, _amiga.WM_CLOSE)
+            _amiga.dispose_object(win)
+            if list_slot[0]:
+                try: _amiga.lb_free_list(list_slot[0])
+                except Exception: pass
+        return picked[0]
+
+    def _do_set_path_prompt():
+        return _prompt("Set pane path",
+                       "path (DH1: or s3:// or s3://bucket)",
+                       _current_pane().path, 200)
+
+    def _do_set_path():
+        try:
+            target = _pick_source()
+            if not target:
+                print("set: cancelled", flush=True); return
+            pane = _current_pane()
+            if target == pane.path:
+                print("set: no change", flush=True); return
+            new_pane = _fm.make_pane(target, r, r)
             panes[panes["focused"]] = new_pane
             side = panes["focused"]
             lb   = left_lb  if side == "left" else right_lb
@@ -543,7 +722,9 @@ def main():
             _refresh_lb(new_pane, lb, slot, intuiwin)
             print(f"set: {side} pane -> {new_pane.path}", flush=True)
         except Exception as e:
-            print(f"set failed: {type(e).__name__}: {e}", flush=True)
+            import traceback
+            print(f"set failed: {type(e).__name__}: {e}\n"
+                  f"{traceback.format_exc()}", flush=True)
 
     def _do_delete():
         try:
@@ -589,81 +770,265 @@ def main():
             print(f"== _do_delete: FAILED {type(ex).__name__}: {ex}\n"
                   f"{traceback.format_exc()}", flush=True)
 
-    def _do_config():
-        try:
-            profiles = _profiles_load()
-            cur = _s3_config_load()
-            # Step 1: pick or create. Show existing names in the
-            # prompt so the user knows what's there. Typing an
-            # existing name loads that profile for edit; a new name
-            # creates a new profile pre-filled with current env.
-            names_list = ", ".join(sorted(profiles.keys())) or "(none yet)"
-            picked = _prompt(
-                "S3 profile picker",
-                f"Name (existing: {names_list})",
-                default="", maxlen=64)
-            if not picked:
-                print("config: cancelled at picker", flush=True); return
-            picked = picked.strip()
-            if not picked:
-                print("config: empty name", flush=True); return
+    def _edit_profile_fields(name, defaults):
+        """Open a field-edit dialog for one profile. Returns the new
+        cfg dict on Save, or None on Cancel."""
+        r = _multi_prompt(
+            f"S3 profile: {name}",
+            [("Endpoint",    defaults.get("S3_ENDPOINT", ""),   80),
+             ("Access Key",  defaults.get("S3_ACCESS", ""),     80),
+             ("Secret Key",  defaults.get("S3_SECRET", ""),     80),
+             ("Insecure TLS", defaults.get("S3_INSECURE", ""),   8),
+             ("Time Skew",   defaults.get("S3_TIME_SKEW", ""), 12)],
+            ok="Save", cancel="Cancel")
+        if r is None:
+            return None
+        return {
+            "S3_ENDPOINT":  r.get("Endpoint", ""),
+            "S3_ACCESS":    r.get("Access Key", ""),
+            "S3_SECRET":    r.get("Secret Key", ""),
+            "S3_INSECURE":  r.get("Insecure TLS", ""),
+            "S3_TIME_SKEW": r.get("Time Skew", ""),
+        }
 
-            defaults = profiles.get(picked, cur)
-            r = _multi_prompt(
-                f"S3 profile: {picked}",
-                [("Endpoint",    defaults.get("S3_ENDPOINT", ""),   80),
-                 ("Access Key",  defaults.get("S3_ACCESS", ""),     80),
-                 ("Secret Key",  defaults.get("S3_SECRET", ""),     80),
-                 ("Insecure TLS", defaults.get("S3_INSECURE", ""),   8),
-                 ("Time Skew",   defaults.get("S3_TIME_SKEW", ""), 12)],
-                ok="Save+Activate", cancel="Cancel")
-            if r is None:
-                print("config: cancelled at fields", flush=True); return
-            new = {
-                "S3_ENDPOINT":  r.get("Endpoint", ""),
-                "S3_ACCESS":    r.get("Access Key", ""),
-                "S3_SECRET":    r.get("Secret Key", ""),
-                "S3_INSECURE":  r.get("Insecure TLS", ""),
-                "S3_TIME_SKEW": r.get("Time Skew", ""),
-            }
-            profiles[picked] = new
-            _profiles_save(profiles)
-            _s3_config_activate(new)
-            print(f"== _do_config: saved+activated profile {picked!r} "
-                  f"(now {len(profiles)} profile(s))", flush=True)
-            # Drop cached S3 clients so next request picks up new creds.
-            for p in (panes["left"], panes["right"]):
-                if hasattr(p, "_client"):
-                    p._client = None
+    def _do_config():
+        """Open the profile picker window: a listbrowser of profile
+        names + [New, Edit, Delete, Activate, Close] buttons."""
+        try:
+            _open_profile_picker()
         except Exception as ex:
             import traceback
             print(f"== _do_config: FAILED {type(ex).__name__}: {ex}\n"
                   f"{traceback.format_exc()}", flush=True)
 
-    def _do_mkbucket():
-        pane = _current_pane()
-        if not pane.path.startswith("s3:"):
-            print("mkbucket: focused pane isn't S3", flush=True); return
-        # Only meaningful when pane is on `s3://` (bucket list level).
-        # If it's inside a bucket, still allow creating a top-level
-        # bucket — S3 buckets are flat.
-        name = _prompt("Make S3 bucket",
-                       "bucket name (lowercase, no /)", "", 63)
-        if not name or not name.strip():
+    # Button IDs for the picker window (only meaningful inside its loop).
+    _PB_NEW      = 300
+    _PB_EDIT     = 301
+    _PB_DELETE   = 302
+    _PB_ACTIVATE = 303
+    _PB_CLOSE    = 304
+    _PB_LB       = 305
+
+    def _open_profile_picker():
+        profiles = _profiles_load()
+        list_slot = [None]
+
+        def _rebuild_rows():
+            active = os.environ.get("S3_ENDPOINT", "")
+            rows = []
+            for n in sorted(profiles.keys()):
+                marker = "*" if profiles[n].get("S3_ENDPOINT") == active else " "
+                ep = profiles[n].get("S3_ENDPOINT", "")
+                rows.append([f"{marker} {n}", ep])
+            return rows
+
+        cols = _amiga.lb_make_columns([("Profile", 3), ("Endpoint", 5)])
+        list_slot[0] = _amiga.lb_make_list(_rebuild_rows())
+
+        lb = _amiga.new_object_multi("listbrowser.gadget", [
+            ("GA_ID", _PB_LB),
+            ("GA_RelVerify",            True),
+            ("LISTBROWSER_ColumnInfo",  cols),
+            ("LISTBROWSER_Labels",      list_slot[0]),
+            (0x85003010, False),   # AutoFit
+            (0x85003012, True),    # ShowSelected
+            (0x85003011, False),   # ColumnTitles
+        ])
+
+        def _mkb(bid, label):
+            return _amiga.new_object("button.gadget",
+                {"GA_ID": bid, "GA_Text": label, "GA_RelVerify": True})
+
+        b_new    = _mkb(_PB_NEW,      "New")
+        b_edit   = _mkb(_PB_EDIT,     "Edit")
+        b_del    = _mkb(_PB_DELETE,   "Delete")
+        b_act    = _mkb(_PB_ACTIVATE, "Activate")
+        b_close  = _mkb(_PB_CLOSE,    "Close")
+
+        _CHILD_WH = 0x85007106
+        btn_row = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 0),       # HORIZ
+            ("LAYOUT_SpaceInner",  True),
+            ("LAYOUT_EvenSize",    True),
+            ("LAYOUT_AddChild",    b_new),
+            ("LAYOUT_AddChild",    b_edit),
+            ("LAYOUT_AddChild",    b_del),
+            ("LAYOUT_AddChild",    b_act),
+            ("LAYOUT_AddChild",    b_close),
+        ])
+        root = _amiga.new_object_multi("layout.gadget", [
+            ("LAYOUT_Orientation", 1),       # VERT
+            ("LAYOUT_SpaceInner",  True),
+            ("LAYOUT_AddChild",    lb),
+            ("LAYOUT_AddChild",    btn_row),
+            (_CHILD_WH,            0),
+        ])
+        win = _amiga.new_object_multi("window.class", [
+            ("WA_Title",       "S3 Servers (each holds endpoint + credentials)"),
+            ("WA_ScreenTitle", "S3 server / profile manager"),
+            ("WA_Activate",    True),
+            ("WA_DragBar",     True),
+            ("WA_CloseGadget", True),
+            ("WA_SizeGadget",  True),
+            ("WA_InnerWidth",  460),
+            ("WA_InnerHeight", 200),
+            ("WINDOW_Position", _amiga.WPOS_CENTERMOUSE),
+            ("WINDOW_Layout",  root),
+        ])
+        pw = _amiga.do_method(win, _amiga.WM_OPEN)
+        if pw == 0:
+            print("profile picker: WM_OPEN failed", flush=True)
+            _amiga.dispose_object(win)
             return
+        piw = _amiga.get_attr(win, 0x81021001)  # WINDOW_Window
+
+        def _selected_name():
+            idx = _amiga.get_attr(lb, 0x85003004)  # SELECTED
+            if idx == 0xffffffff:
+                return None
+            names = sorted(profiles.keys())
+            if 0 <= idx < len(names):
+                return names[idx]
+            return None
+
+        def _refresh_lb_local():
+            new_list = _amiga.lb_make_list(_rebuild_rows())
+            _amiga.set_attrs(lb, {"LISTBROWSER_Labels": 0}, piw)
+            if list_slot[0]:
+                try: _amiga.lb_free_list(list_slot[0])
+                except Exception: pass
+            list_slot[0] = new_list
+            _amiga.set_attrs(lb, {"LISTBROWSER_Labels": new_list}, piw)
+
+        WMHI_CLASSMASK  = 0xFFFF0000
+        WMHI_GADGETMASK = 0x0000FFFF
+        WMHI_CLOSE      = 1  << 16
+        WMHI_GADGETUP   = 2  << 16
+        stop = False
         try:
-            client = _fm._s3_client_from_env()
-            client.make_bucket(name.strip())
-            print(f"mkbucket: created {name!r}", flush=True)
-            # If the pane is on s3://, refresh it to show new bucket.
-            if pane.path.rstrip("/") in ("s3:", "s3://"):
-                pane.refresh()
-                side = panes["focused"]
-                lb   = left_lb  if side == "left" else right_lb
-                slot = left_list_slot if side == "left" else right_list_slot
-                _refresh_lb(pane, lb, slot, intuiwin)
+            while not stop:
+                drained = False
+                while True:
+                    r = _amiga.wm_handleinput(win)
+                    if r is None: break
+                    drained = True
+                    result, _code = r
+                    cls, gid = result & WMHI_CLASSMASK, result & WMHI_GADGETMASK
+                    if cls == WMHI_CLOSE:
+                        stop = True; break
+                    if cls != WMHI_GADGETUP:
+                        continue
+                    if gid == _PB_CLOSE:
+                        stop = True; break
+                    if gid == _PB_NEW:
+                        name = _prompt("New S3 server",
+                                        "Server name (e.g. dev, prod)",
+                                        default="", maxlen=64)
+                        if not name or not name.strip(): continue
+                        name = name.strip()
+                        cur = _s3_config_load()
+                        new = _edit_profile_fields(name, cur)
+                        if new is None: continue
+                        # Reject profiles with no endpoint — they hang
+                        # every subsequent S3 call.
+                        if not new.get("S3_ENDPOINT", "").strip():
+                            print(f"profile: refusing {name!r} — "
+                                  f"endpoint is required", flush=True)
+                            continue
+                        profiles[name] = new
+                        _profiles_save(profiles)
+                        _refresh_lb_local()
+                        print(f"profile: added {name!r}", flush=True)
+                    elif gid == _PB_EDIT:
+                        name = _selected_name()
+                        if not name:
+                            print("profile: nothing selected", flush=True)
+                            continue
+                        new = _edit_profile_fields(name, profiles[name])
+                        if new is None: continue
+                        profiles[name] = new
+                        _profiles_save(profiles)
+                        _refresh_lb_local()
+                        print(f"profile: edited {name!r}", flush=True)
+                    elif gid == _PB_DELETE:
+                        name = _selected_name()
+                        if not name:
+                            print("profile: nothing selected", flush=True)
+                            continue
+                        del profiles[name]
+                        _profiles_save(profiles)
+                        _refresh_lb_local()
+                        print(f"profile: deleted {name!r}", flush=True)
+                    elif gid == _PB_ACTIVATE:
+                        name = _selected_name()
+                        if not name:
+                            print("profile: nothing selected", flush=True)
+                            continue
+                        cfg = profiles[name]
+                        # Refuse to activate a profile with empty
+                        # endpoint — leaves the app trying to resolve
+                        # "" which hangs openssl subprocesses and
+                        # wedges the UI.
+                        if not cfg.get("S3_ENDPOINT", "").strip():
+                            print(f"profile: refusing to activate {name!r} — "
+                                  f"empty S3_ENDPOINT (Edit first to set it)",
+                                  flush=True)
+                            continue
+                        _s3_config_activate(cfg)
+                        for p in (panes["left"], panes["right"]):
+                            if hasattr(p, "_client"):
+                                p._client = None
+                        _refresh_lb_local()
+                        print(f"profile: activated {name!r}", flush=True)
+                if not drained:
+                    time.sleep(0.03)
+        finally:
+            _amiga.do_method(win, _amiga.WM_CLOSE)
+            _amiga.dispose_object(win)
+            if list_slot[0]:
+                try: _amiga.lb_free_list(list_slot[0])
+                except Exception: pass
+
+    def _do_mkbucket():
+        # Find the S3 pane — try focused first, then the other. Buckets
+        # are top-level, so we don't require the pane to be on s3://
+        # exactly; s3://something also lets us create alongside.
+        try:
+            focused = _current_pane()
+            other   = _other_pane()
+            s3_side = None
+            if focused.path.startswith("s3:"):
+                pane, s3_side = focused, panes["focused"]
+            elif other.path.startswith("s3:"):
+                pane = other
+                s3_side = "right" if panes["focused"] == "left" else "left"
+            else:
+                print("mkbucket: no S3 pane open — set one to s3:// first",
+                      flush=True)
+                return
+            name = _prompt("Make S3 bucket",
+                           "bucket name (lowercase, no /)", "", 63)
+            if not name or not name.strip():
+                print("mkbucket: cancelled", flush=True); return
+            name = name.strip()
+            print(f"== _do_mkbucket: creating {name!r} on {pane.path}",
+                  flush=True)
+            with _Busy():
+                client = _fm._s3_client_from_env()
+                client.make_bucket(name)
+                # Refresh the S3 pane if it's at the bucket-list level
+                # (s3://) so the new bucket appears.
+                if pane.path.rstrip("/") in ("s3:", "s3://"):
+                    pane.refresh()
+                    lb   = left_lb  if s3_side == "left" else right_lb
+                    slot = (left_list_slot if s3_side == "left"
+                            else right_list_slot)
+                    _refresh_lb(pane, lb, slot, intuiwin)
+            print(f"== _do_mkbucket: created {name!r} — done", flush=True)
         except Exception as e:
-            print(f"mkbucket failed: {type(e).__name__}: {e}", flush=True)
+            import traceback
+            print(f"== _do_mkbucket: FAILED {type(e).__name__}: {e}\n"
+                  f"{traceback.format_exc()}", flush=True)
 
     def _do_refresh():
         with _Busy():

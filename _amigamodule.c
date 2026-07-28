@@ -690,7 +690,11 @@ py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
     /* Parse each field spec + build the gadget chain. */
     struct Gadget *chain_head = NULL;
     struct Gadget *chain_tail = NULL;
-    int y_cursor = 22;
+    /* Start below the title bar. 22 was cutting it close on OS4 —
+     * the first string gadget would render partially or fully
+     * behind the title, invisible to the user. 34 gives ~14 pixels
+     * of clearance below a standard ~20-pixel title bar. */
+    int y_cursor = 34;
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *spec = PySequence_GetItem(fields_list, i);
         const char *label;
@@ -762,18 +766,24 @@ py_open_dialog(PyObject *self, PyObject *args, PyObject *kwargs)
 
     /* Draw the labels to the left of each string gadget.
      *
-     * Re-derive the y for each row from the same y_cursor arithmetic
-     * we used when positioning the gadget — reading g->TopEdge back
-     * has been unreliable (OS4 Intuition may adjust it after open).
-     * The gadget y_cursor started at 22, but that's within the title
-     * bar area on some window styles; bump the drawing baseline by
-     * the actual BorderTop we now know from the opened window. */
+     * The string gadget's TopEdge is measured from the top of the
+     * window frame (including title bar). Intuition places the gadget
+     * accordingly. But drawing to the window's RastPort with Move(x, y)
+     * puts (0,0) at the top-left of the CLIENT area (inside the
+     * borders). So to line up a label with a gadget at TopEdge=y, we
+     * draw at rastport y = (y - BorderTop) + baseline. Previously we
+     * added BorderTop, which shifted every label DOWN one row and
+     * paired each label with the wrong input. */
+    /* Match label Y to the gadget's actual on-screen Y. On OS4 the
+     * window's RastPort (0,0) is the top of the WINDOW (including
+     * border), NOT the top of the client area — same coord space as
+     * the string gadget's TopEdge. Draw at gadget_top + baseline. */
     struct RastPort *rp = dlg->win->RPort;
     SetAPen(rp, 1);
     for (int i = 0; i < dlg->n_fields; i++) {
-        int ly = 22 + i * (DIALOG_GADGET_H + DIALOG_ROW_SPACING);
-        Move(rp, dlg->win->BorderLeft + 8,
-                 dlg->win->BorderTop + ly + DIALOG_GADGET_H - 3);
+        int gadget_top = 34 + i * (DIALOG_GADGET_H + DIALOG_ROW_SPACING);
+        int rp_y = gadget_top + DIALOG_GADGET_H - 3;
+        Move(rp, dlg->win->BorderLeft + 8, rp_y);
         Text(rp, (STRPTR)dlg->fields[i].label,
                  (LONG)strlen(dlg->fields[i].label));
     }
