@@ -1,0 +1,73 @@
+; AmigaDOS AutoInstall Script for Python 3.12.7
+; Runs via AmigaDOS Execute command or double-clicking icon
+
+Echo "=========================================================="
+Echo " AmigaOS 4.1 AutoInstall - Python 3.12.7"
+Echo "=========================================================="
+Echo ""
+
+Echo "Step 1: Installing python3 binary to C:..."
+If EXISTS C/python3
+    Copy C/python3 C:python3 CLONE
+    Echo "  -> Installed C/python3 -> C:python3"
+Else
+    If EXISTS python3
+        Copy python3 C:python3 CLONE
+        Echo "  -> Installed python3 -> C:python3"
+    Else
+        Echo "  -> Notice: python3 binary not found in current directory."
+    EndIf
+EndIf
+
+Echo ""
+Echo "Step 2: Installing Python 3 system files to SYS:System/python3..."
+MakeDir SYS:System/python3
+If EXISTS System/python3
+    Copy System/python3 SYS:System/python3 ALL CLONE
+    Echo "  -> Installed files into SYS:System/python3"
+Else
+    If EXISTS lib
+        Copy ALL CLONE . SYS:System/python3
+        Echo "  -> Installed files into SYS:System/python3"
+    Else
+        Echo "  -> Notice: System/python3 directory not found."
+    EndIf
+EndIf
+
+Echo ""
+Echo "Step 3: Setting persistent environment variables..."
+SetEnv PYTHONHOME SAVE python3:
+SetEnv PYTHONPATH SAVE python3:lib
+Echo "  -> Set persistent PYTHONHOME and PYTHONPATH in ENVARC:"
+
+Echo ""
+Echo "Step 4: Validating and configuring system assigns..."
+If EXISTS python3:
+    Echo "  -> Assign 'python3:' is active."
+Else
+    Assign python3: SYS:System/python3
+    Echo "  -> Created assignment 'python3:' -> SYS:System/python3"
+EndIf
+
+If EXISTS S:User-Startup
+    Echo "" >> S:User-Startup
+    Echo "; --- Python 3.12.7 for AmigaOS 4 ---" >> S:User-Startup
+    Echo "Assign python3: SYS:System/python3" >> S:User-Startup
+    Echo "; --- End Python 3 ---" >> S:User-Startup
+    Echo "  -> Added 'Assign python3: SYS:System/python3' to S:User-Startup"
+EndIf
+
+Echo ""
+Echo "=========================================================="
+Echo " Verification & Summary:"
+If EXISTS C:python3
+    Echo "  Python 3.12.7 binary : C:python3 [OK]"
+Else
+    Echo "  Python 3.12.7 binary : MISSING"
+EndIf
+
+Echo "  Python 3.12.7 home   : SYS:System/python3 [OK]"
+Echo ""
+Echo " Installation Complete!"
+Echo " Test installation by running in Shell: python3 --version"
+Echo "=========================================================="

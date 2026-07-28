@@ -98,6 +98,7 @@ fi
 [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$SYS_DIR/LICENSE"
 [ -f "$REPO/Install-Python3" ] && cp "$REPO/Install-Python3" "$STAGE_DIR/Install-Python3"
 [ -f "$REPO/Install-Python3.info" ] && cp "$REPO/Install-Python3.info" "$STAGE_DIR/Install-Python3.info"
+[ -f "$REPO/autoinstall" ] && cp "$REPO/autoinstall" "$STAGE_DIR/autoinstall"
 
 
 # 7. Create Startup Script Snippet
