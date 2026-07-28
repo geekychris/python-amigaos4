@@ -56,9 +56,13 @@ EndIf
 
 Echo ""
 Echo "Step 3: Setting script protection bits on helper tools..."
-If EXISTS SYS:System/python3/bin
-    Protect SYS:System/python3/bin/#? +s +e >NIL:
-    Echo "  -> Set script protection bit (+s) on SYS:System/python3/bin/ tools"
+If EXISTS SYS:System/python3/bin/pip3
+    Protect SYS:System/python3/bin/pip3 +s +e >NIL:
+    Echo "  -> Set script (+s) and execute (+e) bits on SYS:System/python3/bin/pip3"
+EndIf
+If EXISTS SYS:System/python3/bin/pip
+    Protect SYS:System/python3/bin/pip +s +e >NIL:
+    Echo "  -> Set script (+s) and execute (+e) bits on SYS:System/python3/bin/pip"
 EndIf
 
 Echo ""
