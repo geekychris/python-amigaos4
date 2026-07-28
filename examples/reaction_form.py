@@ -82,17 +82,41 @@ def try_reaction():
         ])
         _log(f"  root={hex(root)}")
 
-        _log("new_object window.class — MINIMAL: no layout, hard size")
+        _log("new_object window.class — MINIMAL: no layout, full tag set")
+        # KEY INSIGHT (2026-07-28): window.class's WM_OPEN handler
+        # calls IIntuition->OpenWindowTagList() under the hood. That
+        # function REQUIRES:
+        #   - WA_Flags with at least a refresh mode (WFLG_SIMPLE_REFRESH
+        #     = 0x40 or WFLG_SMART_REFRESH = 0). Without a refresh
+        #     mode set, OpenWindow returns NULL and WM_OPEN
+        #     propagates that as 0.
+        #   - WA_MinWidth/MinHeight/MaxWidth/MaxHeight for a sizable
+        #     window (otherwise "size gadget" without limits fails).
+        # These are set automatically by OpenWindowTags in
+        # py_open_window (see _amigamodule.c:318) — our BOOPSI path
+        # was missing them, which is why WM_OPEN kept returning 0.
+        #
+        # Tag constants:
+        #   WFLG_SIZEGADGET   = 0x00000001
+        #   WFLG_DRAGBAR      = 0x00000002
+        #   WFLG_DEPTHGADGET  = 0x00000004
+        #   WFLG_CLOSEGADGET  = 0x00000008
+        #   WFLG_SIMPLE_REFRESH = 0x00000040
+        #   WFLG_ACTIVATE     = 0x00001000
+        # (from intuition/intuition.h)
+        # Match Hyperion SDK example
+        # (refs/os4-sdk/base/Examples/GUI/Window/Window.c) as closely
+        # as possible: individual booleans (not WA_Flags), WA_ScreenTitle
+        # required, position via WINDOW_Position.
         win = _amiga.new_object_multi("window.class", [
+            ("WA_ScreenTitle", "reaction_form test"),
             ("WA_Title",       "Python ReAction"),
             ("WA_Activate",    True),
             ("WA_DepthGadget", True),
             ("WA_DragBar",     True),
             ("WA_CloseGadget", True),
-            ("WA_Left",   100),
-            ("WA_Top",    100),
-            ("WA_Width",  300),
-            ("WA_Height", 100),
+            ("WA_SizeGadget",  True),
+            ("WINDOW_Position", 2),   # WPOS_CENTERMOUSE
         ])
         _log(f"  win={hex(win)}")
         if not win:
@@ -116,10 +140,8 @@ def try_reaction():
 def main():
     win, intuiwin = try_reaction()
     if not win:
-        print("reaction_form: ReAction path failed. Fallback DISABLED "
-              "during debug — set _amiga.debug_reaction_fallback=1 to "
-              "restore.", flush=True)
-        return 1
+        print("reaction_form: ReAction path unavailable — using "
+              "open_dialog form instead.", flush=True)
         result = fallback_dialog()
         if result is None:
             print("reaction_form: cancelled.", flush=True)
