@@ -403,6 +403,13 @@ def getsitepackages(prefixes=None):
 def addsitepackages(known_paths, prefixes=None):
     """Add site-packages to sys.path"""
     _trace("Processing global site-packages")
+
+    for extra_site in ("python3:lib/site-packages", "SYS:System/python3/lib/site-packages"):
+        try:
+            addsitedir(extra_site, known_paths)
+        except Exception:
+            pass
+
     for sitedir in getsitepackages(prefixes):
         if os.path.isdir(sitedir):
             addsitedir(sitedir, known_paths)

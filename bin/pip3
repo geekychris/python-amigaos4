@@ -1,2 +1,19 @@
-.key ARGS/F
-python3 -m pip <ARGS>
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""AmigaOS 4 pip3 launcher script"""
+import os
+import sys
+
+# Ensure site-packages is in sys.path
+for _p in (
+    "python3:lib/site-packages",
+    "SYS:System/python3/lib/site-packages",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib", "site-packages"),
+):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from pip._internal.cli.main import main
+
+if __name__ == "__main__":
+    sys.exit(main())
