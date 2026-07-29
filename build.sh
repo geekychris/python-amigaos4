@@ -27,10 +27,13 @@ esac
 
 mkdir -p "$HERE/$BUILD"
 
-docker run --rm -v "$HERE:/work" -w "/work/$BUILD" "$IMAGE" bash -c '
+docker run --rm -v "$HERE:/work" "$IMAGE" bash -c '
 set -e
 STAGE="${1:-make}"
 echo "=== stage: $STAGE ==="
+
+mkdir -p /tmp/build-ppc-amigaos
+cd /tmp/build-ppc-amigaos
 
 # Cross-compile environment. GCC toolchain from the walkero image
 # lives under /opt/ppc-amigaos. Its bin/ dir has ppc-amigaos-gcc etc.
@@ -53,8 +56,6 @@ export LDFLAGS="-mcrt=newlib -lauto"
 export LDSHARED="ppc-amigaos-gcc -shared"
 export LINKCC="ppc-amigaos-gcc"
 # CPython needs a native python of the same major.minor for freezing.
-# The image ships 3.14 — let configure discover it; if freeze breaks
-# well swap in 3.12 later via a Dockerfile.
 export PYTHON_FOR_BUILD=/usr/bin/python3.12
 export PYTHONNOUSERSITE=1
 
@@ -66,8 +67,8 @@ if [ ! -f config.status ]; then
     # reference them by plain filename (avoids absolute-path Makefile bugs).
     cp /work/_amigamodule.c /work/'"$SRC"'/Modules/
     echo "=== configure ==="
-    ../'"$SRC"'/configure \
-        --build=aarch64-unknown-linux-gnu \
+    /work/'"$SRC"'/configure \
+        --build=x86_64-unknown-linux-gnu \
         --host=powerpc-unknown-amigaos \
         --prefix=/tmp/python-amiga-install \
         --disable-shared \
@@ -97,33 +98,21 @@ if [ "$STAGE" = "make" ]; then
     # not from srcdir, so we overwrite it after configure runs.
     cp -f /work/setup.local Modules/Setup.local
     # Also refresh our custom module sources each make cycle.
-    cp -f /work/_amigamodule.c ../'"$SRC"'/Modules/
+    cp -f /work/_amigamodule.c /work/'"$SRC"'/Modules/
     # Compile our POSIX shims. Use --whole-archive around the .a
     # so every symbol gets pulled into the link unconditionally.
-    # Plain -l is subject to standard archive-scan rules (only
-    # resolves outstanding undefs at that link position); CPython
-    # builds the link line in an order that misses them.
     ppc-amigaos-gcc $CFLAGS_BASE -c /work/amiga_shim.c -o amiga_shim.o
     ppc-amigaos-ar rcs libamiga_shim.a amiga_shim.o
     export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
-    # amissl_lazy.a — replacement for libamisslauto (whose ELF ctor
-    # forces amissl.library open at every process start). Provides
-    # AmiSSLBase/IAmiSSL globals + _amissl_ensure_open helper that
-    # patched PyInit__ssl / PyInit__hashlib call on demand. See
-    # Modules-_ssl-lazy-amissl.patch + Modules-_hashopenssl-lazy-amissl.patch
-    # for the CPython source hooks.
     ppc-amigaos-gcc $CFLAGS_BASE -c /work/amissl_lazy.c -o amissl_lazy.o
     ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
     export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
-    # For make (not configure), force-include the shim header so
-    # every .c file sees our prototypes / define overrides.
     export CFLAGS="$CFLAGS_BASE -include /work/amiga_shim.h"
     echo "=== make ==="
-    # Aim for the interpreter binary first; skip stdlib compile until we
-    # know the core links. Use -k to keep going past first failure so we
-    # collect a good diff of what breaks.
-    make -j1 2>&1 | tail -80 || true
-    echo "=== stopped (see log above) ==="
-    ls -la python 2>/dev/null || echo "no python binary produced"
+    make -j$(nproc) || make -j1
+    cp python /work/'"$BUILD"'/python.exe
+    cp python /work/'"$BUILD"'/python
+    echo "=== build complete ==="
+    ls -la /work/'"$BUILD"'/python.exe
 fi
 ' "${1:-make}"

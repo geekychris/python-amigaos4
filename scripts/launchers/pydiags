@@ -17,10 +17,10 @@
 ; script itself, so pydiags input() returns EOF immediately and the
 ; TUI drops back to shell.  Launch directly instead:
 ;
-;   setenv PYTHONHOME DH1:
-;   setenv PYTHONPATH DH1:lib
-;   DH1:python-os4 DH1:pytests/examples/pydiags.py
+;   ; setenv PYTHONHOME python3:
+;   ; setenv PYTHONPATH python3:lib
+;   python3 python3:examples/pydiags.py
 ;
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/pydiags.py <ARGS>
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
+python3 python3:examples/pydiags.py <ARGS>

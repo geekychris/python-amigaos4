@@ -32,7 +32,9 @@ from amiga import s3
 
 # --- override the s3sync module's DH1-specific path insert ---
 sys.path.insert(0, os.path.join(REPO, "examples"))
-# The example does `sys.path.insert(0, "DH1:pytests/amiga_bindings")`
+# The example does `for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)`
 # on import, which is harmless on Mac (that dir doesn't exist), but
 # we also need amiga.s3 (already imported), so the module import
 # below succeeds.

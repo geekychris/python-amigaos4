@@ -3,7 +3,7 @@
 ## Prerequisites (on OS4 target)
 
 ```
-DH1:python-os4        # the interpreter (8.9 MB stripped)
+python3        # the interpreter (8.9 MB stripped)
 DH1:lib/              # stdlib: encodings, os.py, codecs.py, ...
 ```
 
@@ -20,23 +20,23 @@ silently during `init_fs_encoding` with:
 ModuleNotFoundError: No module named 'encodings'
 ```
 
-Symptom: `DH1:python-os4 --help` prints normally, but `DH1:python-os4
+Symptom: `python3 --help` prints normally, but `python3
 RAM:anything.py` produces zero output (script is never reached).
 
 Fix:
 
 ```
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
 ```
 
 Set these **once per boot** (or add to `S:User-Startup`) and every
-subsequent `DH1:python-os4` invocation works.
+subsequent `python3` invocation works.
 
 Sanity check:
 
 ```
-DH1:python-os4 RAM:tiny.py
+python3 RAM:tiny.py
 ```
 
 where `RAM:tiny.py` is:
@@ -74,18 +74,18 @@ When Python silently fails:
 Deploy the amiga_bindings tree and the demo apps:
 
 ```
-amiga_transfer  amiga_bindings/  DH1:pytests/amiga_bindings/
-amiga_transfer  examples/        DH1:pytests/examples/
+amiga_transfer  amiga_bindings/  python3:amiga_bindings/
+amiga_transfer  examples/        python3:examples/
 ```
 
 Try the demos in this order:
 
 ```
-DH1:python-os4 DH1:pytests/examples/hello_dos.py
-DH1:python-os4 DH1:pytests/examples/clock.py                   # windowed
-DH1:python-os4 DH1:pytests/examples/window_sysmon.py           # windowed
-DH1:python-os4 DH1:pytests/examples/snake.py                   # turtle game
-DH1:python-os4 DH1:pytests/examples/snake_verifiable.py        # + audit log
+python3 python3:examples/hello_dos.py
+python3 python3:examples/clock.py                   # windowed
+python3 python3:examples/window_sysmon.py           # windowed
+python3 python3:examples/snake.py                   # turtle game
+python3 python3:examples/snake_verifiable.py        # + audit log
 ```
 
 See `docs/DEMOS.md` for screenshots + Mac↔Amiga snake comparison.

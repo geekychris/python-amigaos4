@@ -299,15 +299,17 @@ reviews:
         Demo apps that run on the OS4 target.  Same reduced-stdlib
         rules as amiga_bindings/.  Every example script MUST work
         after:
-          setenv PYTHONHOME DH1:
-          setenv PYTHONPATH DH1:lib
-          DH1:python-os4 DH1:pytests/examples/<name>.py
+          ; setenv PYTHONHOME python3:
+          ; setenv PYTHONPATH python3:lib
+          python3 python3:examples/<name>.py
         Anything that assumes a specific cwd, expects env vars other
         than PYTHONHOME/PYTHONPATH, or hard-codes a mac-style path is
         a bug on the target.  Test data / DBs default to RAM: for
         speed and non-persistence -- flag anything that writes to
         SYS: or DH0: without documenting why.
-        `sys.path.insert(0, "DH1:pytests/amiga_bindings")` at the top
+        `for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)` at the top
         of a script is required if the example imports `amiga.ui`
         etc.; a stale `chris:pytests/amiga` namespace package shadows
         our real bindings otherwise.
@@ -332,8 +334,8 @@ reviews:
           DH1:scripts/ on the target).  These use `setenv`, `execute`,
           `>NIL:` etc.  Do NOT flag missing `#!` shebangs or POSIX
           idioms here -- AmigaDOS shell isn't sh-compatible.  DO flag
-          any launcher that forgets `setenv PYTHONHOME DH1:` or
-          `setenv PYTHONPATH DH1:lib` -- Python will silently init-fail
+          any launcher that forgets `; setenv PYTHONHOME python3:` or
+          `; setenv PYTHONPATH python3:lib` -- Python will silently init-fail
           without them.
 
     # --------------------------------------------------------------

@@ -1,5 +1,5 @@
 ; Launcher for web_notes — sets PYTHONHOME/PATH then runs the demo.
 ; Usage:  execute DH1:scripts/web_notes
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/web_notes.py
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
+python3 python3:examples/web_notes.py

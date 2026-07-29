@@ -35,15 +35,15 @@ amiga_transfer  Python-3.12.7/Lib/collections/*.py DH1:lib/collections/
 amiga_transfer  Python-3.12.7/Lib/json/*.py     DH1:lib/json/
 amiga_transfer  Python-3.12.7/Lib/re/*.py       DH1:lib/re/
 
-amiga_transfer  tests/framework.py              DH1:pytests/framework.py
-amiga_transfer  tests/language/*.py             DH1:pytests/language/
-amiga_transfer  tests/stdlib/*.py               DH1:pytests/stdlib/
-amiga_transfer  tests/io/*.py                   DH1:pytests/io/
-amiga_transfer  tests/amiga/*.py                DH1:pytests/amiga/
-amiga_transfer  amiga_bindings/                 DH1:pytests/amiga_bindings/
+amiga_transfer  tests/framework.py              python3:framework.py
+amiga_transfer  tests/language/*.py             python3:language/
+amiga_transfer  tests/stdlib/*.py               python3:stdlib/
+amiga_transfer  tests/io/*.py                   python3:io/
+amiga_transfer  tests/amiga/*.py                python3:amiga/
+amiga_transfer  amiga_bindings/                 python3:amiga_bindings/
 
 # 2. Run every test
-amiga_dos_command "DH1:python-os4 DH1:pytests/language/01_arithmetic.py"
+amiga_dos_command "python3 python3:language/01_arithmetic.py"
 # ... repeat for each file, or wrap in a small shell loop from an
 #     MCP-enabled Claude session.
 ```

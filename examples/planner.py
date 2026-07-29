@@ -14,8 +14,8 @@ Rich, click-driven UI:
 Every action reachable by either keyboard hotkey OR mouse click.
 
 Run:
-    setenv PYTHONHOME DH1: ; setenv PYTHONPATH DH1:lib
-    DH1:python-os4 DH1:pytests/examples/planner.py
+    ; setenv PYTHONHOME python3: ; ; setenv PYTHONPATH python3:lib
+    python3 python3:examples/planner.py
 """
 import os
 import sys
@@ -25,7 +25,9 @@ import sqlite3
 from dataclasses import dataclass
 from typing import List, Optional
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import _amiga
 import amiga.intuition as intu
@@ -38,7 +40,7 @@ HAVE_DIALOG = hasattr(_amiga, "open_dialog")
 # Storage
 # ---------------------------------------------------------------------------
 
-DB_DIR = "DH1:Documents/Planner"
+DB_DIR = "DH1:Documents/Planner" if os.path.exists("DH1:") else "SYS:System/python3/Documents/Planner"
 DB_PATH = f"{DB_DIR}/planner.db"
 
 

@@ -242,3 +242,18 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
     Delay(ticks);
     return 0;
 }
+
+/* --- pthread_mutex_destroy shim ------------------------------------
+ * OS4 newlib libpthread's internal pthread_mutex_destroy() prints a noisy
+ * "pthread_mutex_destroy: Device or resource busy" directly to stderr
+ * whenever a mutex associated with condition variables is destroyed.
+ * Zero out the mutex structure to clean it up without calling libpthread's
+ * noisy stderr printer. */
+#undef pthread_mutex_destroy
+int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex)
+{
+    if (mutex) {
+        memset(mutex, 0, sizeof(pthread_mutex_t));
+    }
+    return 0;
+}

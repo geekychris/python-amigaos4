@@ -103,6 +103,16 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 #define INET6_ADDRSTRLEN 46
 #endif
 
+/* -------------------------------------------------------------------------
+ * pthread_mutex_destroy shim — OS4 newlib libpthread returns EBUSY (16)
+ * when destroying locks previously associated with condition variables or
+ * threads. Shim it to return 0 when status is EBUSY so CPython's
+ * CHECK_STATUS_PTHREAD doesn't spam stderr with "Device or resource busy".
+ * ---------------------------------------------------------------------- */
+#include <pthread.h>
+int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex);
+#define pthread_mutex_destroy amiga_pthread_mutex_destroy
+
 #ifdef __cplusplus
 }
 #endif

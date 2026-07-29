@@ -1,0 +1,96 @@
+# Python 3.12.7 Installation Script
+# For AmigaOS 4 Installation Utility
+from installer import *
+import os
+
+# --- Configuration ---
+app_name = "Python 3"
+version = "3.12.7"
+welcome_text = "Welcome to the AmigaOS 4 Python3 installer.\n\nThis script will install CPython 3.12.7, its standard library, and native AmigaOS bindings on your system."
+finish_text = "%s %s has been installed successfully!" % (app_name, version)
+
+# --- Define Pages ---
+
+# 1. Welcome Page
+welcome_page = NewPage(WELCOME)
+SetString(welcome_page, "message", welcome_text)
+
+# 2. Readme Page
+# The utility automatically displays readme.txt
+readme_page = NewPage(README)
+
+# 3. Destination Page
+dest_page = NewPage(DESTINATION)
+SetString(dest_page, "message", "Select the folder where you want to install %s." % app_name)
+SetString(dest_page, "destination", "SYS:System/python3")
+
+# 4. Package Selection
+core_package = AddPackage(
+    FILEPACKAGE,
+    name="Python 3 Core & Executable",
+    description="The main python3 executable and system directory.",
+    files=["C", "System"],
+    optional=False
+)
+
+# 5. Progress Page
+install_page = NewPage(INSTALL)
+
+# 6. Finish Page
+final_page = NewPage(FINISH)
+SetString(final_page, "message", finish_text)
+
+# --- Environment & Assign Setup Function ---
+def post_install():
+    user_startup = "S:User-Startup"
+
+    # Check for Assign
+    assign_present = False
+    if os.path.exists(user_startup):
+        try:
+            f = open(user_startup, "r")
+            try:
+                content = f.read()
+                if "python3:" in content:
+                    assign_present = True
+            finally:
+                f.close()
+        except:
+            pass
+
+    # Check for Env Vars
+    env_home = os.environ.get("PYTHONHOME", "")
+    env_path = os.environ.get("PYTHONPATH", "")
+    env_present = bool(env_home or env_path)
+
+    # 1. Add Assign to S:User-Startup if missing
+    if not assign_present:
+        try:
+            f = open(user_startup, "a")
+            try:
+                f.write("\n; --- Python 3.12.7 for AmigaOS 4 ---\n")
+                f.write("Assign python3: SYS:System/python3\n")
+                f.write("; --- End Python 3 ---\n")
+            finally:
+                f.close()
+        except:
+            pass
+
+    # 2. Create persistent environment variables if missing
+    if not env_present:
+        try:
+            os.system("SetEnv PYTHONHOME SAVE python3:")
+            os.system("SetEnv PYTHONPATH SAVE python3:lib")
+        except:
+            pass
+
+# Register the post-install action (if supported by the utility version)
+try:
+    AddPostInstallAction(post_install)
+except:
+    pass
+
+# Perform post-install checks / execution
+post_install()
+
+RunInstaller()

@@ -1,5 +1,5 @@
 ; Launcher for gui_form — sets PYTHONHOME/PATH then runs the demo.
 ; Usage:  execute DH1:scripts/gui_form
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH DH1:lib
-DH1:python-os4 DH1:pytests/examples/gui_form.py
+; setenv PYTHONHOME python3:
+; setenv PYTHONPATH python3:lib
+python3 python3:examples/gui_form.py

@@ -37,12 +37,14 @@ import os
 import sys
 import time
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import _amiga
 
 # Reuse pane model from fileman v1.
-sys.path.insert(0, "DH1:pytests/examples")
+sys.path.insert(0, "python3:examples")
 import fileman as _fm
 
 
@@ -241,6 +243,8 @@ def _s3_config_activate(cfg):
 def main():
     left_spec  = os.environ.get("FILEMAN2_LEFT",  "SYS:")
     right_spec = os.environ.get("FILEMAN2_RIGHT", "DH1:")
+    if not right_spec.startswith("s3://") and not os.path.exists(right_spec):
+        right_spec = "SYS:"
 
     class _R: pass
     r = _R(); r.x1=r.y1=r.x2=r.y2=0

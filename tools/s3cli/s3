@@ -2,8 +2,8 @@
 .BRA {
 .KET }
 ;
-; s3 — thin AmigaDOS launcher. Runs `DH1:python-os4 s3.py <args>`
+; s3 — thin AmigaDOS launcher. Runs `python3 s3.py <args>`
 ; so you can type  s3 ls test/photos  from any directory.
 ; Assumes this file lives in DH1:s3cli/ alongside s3.py.
 ;
-DH1:python-os4 DH1:s3cli/s3.py {VERB} {ARGS}
+python3 DH1:s3cli/s3.py {VERB} {ARGS}

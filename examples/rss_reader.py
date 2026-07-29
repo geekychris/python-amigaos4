@@ -8,12 +8,14 @@ open one article's URL in browser.py.
 Default feed: BBC News world (RSS 2.0). Pass a URL on the command
 line to fetch anything else:
 
-    DH1:python-os4 DH1:pytests/examples/rss_reader.py
-    DH1:python-os4 DH1:pytests/examples/rss_reader.py https://feeds.bbci.co.uk/news/world/rss.xml
+    python3 python3:examples/rss_reader.py
+    python3 python3:examples/rss_reader.py https://feeds.bbci.co.uk/news/world/rss.xml
 """
-import sys
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
-sys.path.insert(0, "DH1:pytests/examples")   # for browser.fetch
+import sys, os
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+sys.path.insert(0, "python3:examples")   # for browser.fetch
 
 
 DEFAULT_FEED = "https://feeds.bbci.co.uk/news/world/rss.xml"

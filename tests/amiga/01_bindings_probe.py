@@ -41,7 +41,7 @@ assigns = dos.Assign()
 T.check(isinstance(assigns, dict), "Assign() returns dict")
 T.check(len(assigns) > 0, "Assign() has at least one entry")
 
-info = dos.Examine("DH1:python-os4")
+info = dos.Examine("python3")
 T.check(info.size > 1_000_000, "python-os4 binary >1MB")
 T.check(info.is_dir is False, "python-os4 is a file, not dir")
 

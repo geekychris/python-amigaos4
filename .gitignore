@@ -14,3 +14,7 @@ Python-3.12.7/
 # copy from the Docker image. See README for OS4-side install.
 newlib.library
 python312.zip
+
+# Releases and temp build scripts
+releases/
+apply_patches.sh

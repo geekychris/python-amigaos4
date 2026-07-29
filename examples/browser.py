@@ -17,10 +17,12 @@ The goal is to show that a real HTTP client + parser stack runs on
 sam460ex/newlib, driving a real Intuition window.
 """
 import io
-import sys
+import sys, os
 import time
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import _amiga
 # Patch socket.getaddrinfo / gethostbyname so urllib / http.client work
@@ -152,7 +154,7 @@ def _fetch_https(url, timeout=15):
     Python's _ssl module can't complete TLS handshakes over its own
     _socket-owned fds on OS4 (task #94 fd interop). amiga.https packages
     the working workaround: write request to T:, pipe through openssl,
-    read response. Requires AmiSSL installed + DH1:openssl deployed.
+    read response. Requires AmiSSL installed + openssl CLI deployed.
     """
     from amiga import https as ah
     status, headers, body = ah.get(url, timeout=timeout)
@@ -174,8 +176,8 @@ def fetch(url, timeout=15):
             return "text/plain", (
                 f"HTTPS unavailable: {e}\n\n"
                 f"Install AmiSSL + openssl CLI, then deploy "
-                f"amiga_bindings/amiga/https/ to DH1:lib/amiga/https/ "
-                f"(or DH1:pytests/amiga_bindings/amiga/https/).".encode())
+                f"amiga_bindings/amiga/https/ to SYS:System/python3/amiga_bindings/amiga/https/ "
+                f"(or python3:amiga_bindings/amiga/https/).".encode())
         except Exception as e:
             return "text/plain", (
                 f"HTTPS fetch failed: {type(e).__name__}: {e}".encode())

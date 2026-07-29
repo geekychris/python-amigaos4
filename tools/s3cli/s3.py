@@ -33,12 +33,14 @@ Config:
 import os
 import sys
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
     from amiga import s3 as _s3
 except ImportError:
-    print("s3: amiga.s3 not importable — is DH1:pytests/amiga_bindings "
+    print("s3: amiga.s3 not importable — is python3:amiga_bindings "
           "on the path?", file=sys.stderr)
     sys.exit(2)
 
@@ -197,12 +199,12 @@ def cmd_sync(args):
     """Hand off to s3sync — same env vars, richer flag surface."""
     here = os.path.dirname(os.path.abspath(__file__))
     # Prefer the sibling s3sync.py if present; else fall back to
-    # DH1:pytests/examples/s3sync.py which the deploy script places.
+    # python3:examples/s3sync.py which the deploy script places.
     for candidate in (os.path.join(here, "s3sync.py"),
-                      "DH1:pytests/examples/s3sync.py"):
+                      "python3:examples/s3sync.py"):
         if os.path.exists(candidate):
-            os.execvp("DH1:python-os4",
-                       ["DH1:python-os4", candidate] + args)
+            os.execvp("python3",
+                       ["python3", candidate] + args)
     print("s3 sync: s3sync.py not found", file=sys.stderr)
     return 3
 

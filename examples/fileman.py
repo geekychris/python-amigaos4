@@ -36,7 +36,9 @@ import stat
 import sys
 import time
 
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import _amiga
 from amiga.ui import (App, Button, Label, ListPanel, Rect,
@@ -158,8 +160,9 @@ def _format_row(e):
 
 class LocalPane(BasePane):
     def __init__(self, path, list_rect, label_rect):
-        super().__init__(os.path.abspath(path) if path else "/",
-                         list_rect, label_rect)
+        if path and not path.startswith("s3://") and not os.path.exists(path):
+            path = "SYS:"
+        super().__init__(path if path else "SYS:", list_rect, label_rect)
 
     def refresh(self):
         try:
@@ -645,6 +648,8 @@ def draw_status(app):
 def main():
     left_spec  = os.environ.get("FILEMAN_LEFT",  "SYS:")
     right_spec = os.environ.get("FILEMAN_RIGHT", "DH1:")
+    if not right_spec.startswith("s3://") and not os.path.exists(right_spec):
+        right_spec = "SYS:"
 
     app = App(title="Python File Manager (local + S3)",
               w=820, h=440, left=40, top=30)

@@ -13,10 +13,12 @@ Controls:
   Menu picks          → logged in the window
 
 Run:
-    DH1:python-os4 DH1:pytests/examples/menu_demo.py
+    python3 python3:examples/menu_demo.py
 """
-import sys
-sys.path.insert(0, "DH1:pytests/amiga_bindings")
+import sys, os
+for _p in ("python3:amiga_bindings", "System/python3/amiga_bindings", os.path.join(os.path.dirname(__file__), "..", "amiga_bindings")):
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import _amiga
 

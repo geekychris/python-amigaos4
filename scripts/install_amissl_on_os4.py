@@ -19,7 +19,7 @@ Config knobs (env vars):
   AMISSL_TAG      pin a specific release, e.g. `AMISSL_TAG=5.27`
   AMISSL_CACHE    where to keep the downloaded archive
   MCP_URL         devbench MCP endpoint (default http://localhost:3000/mcp)
-  PYTHON_OS4      target-side path to the interpreter (default DH1:python-os4)
+  PYTHON_OS4      target-side path to the interpreter (default python3)
 
 Exit codes:
   0   installed (or already installed) + smoke test passed
@@ -42,7 +42,7 @@ AMISSL_TAG   = os.environ.get("AMISSL_TAG", "")     # blank = ask GitHub
 AMISSL_CACHE = Path(os.environ.get("AMISSL_CACHE",
                                     Path.home() / ".cache" / "amissl"))
 DEVBENCH_URL = os.environ.get("DEVBENCH_URL", "http://localhost:3000")
-PYTHON_OS4   = os.environ.get("PYTHON_OS4", "DH1:python-os4")
+PYTHON_OS4   = os.environ.get("PYTHON_OS4", "python3")
 
 PUSH_RETRIES = 4
 PUSH_BACKOFF = 5.0    # seconds between retries
