@@ -174,6 +174,42 @@ def _stat():
 _check("stat", "CORE", _stat)
 
 
+def _custom_assign_write():
+    """Verify writes to a NON-native AmigaDOS assign (System:, python3:,
+    LIBS:, ...) actually land at the OS-visible location. Catches the
+    '/ystem:' / '/ython3:' corruption reported by Bill on his install
+    running python3:bin/pip. If newlib prepends CWD without translation,
+    the volume requester ('Please insert volume /ystem:') fires."""
+    # Probe assigns most likely to exist on any OS4 install.
+    candidates = ["SYS:", "System:", "python3:", "T:"]
+    tried = []
+    last_err = None
+    for prefix in candidates:
+        try:
+            os.stat(prefix)  # confirm the assign is mounted
+        except OSError:
+            continue
+        probe = prefix + "smoke_assign_probe.tmp"
+        tried.append(prefix)
+        try:
+            with open(probe, "w") as f:
+                f.write("assign_probe_payload")
+            with open(probe, "r") as f:
+                got = f.read()
+            if got != "assign_probe_payload":
+                raise RuntimeError(f"read-back mismatch under {prefix}: {got!r}")
+            try: os.remove(probe)
+            except OSError: pass
+            return f"write+read+delete ok under {prefix}"
+        except BaseException as e:
+            last_err = f"under {prefix}: {type(e).__name__}: {e}"
+            try: os.remove(probe)
+            except OSError: pass
+            continue
+    raise RuntimeError(f"tried {tried}, last error: {last_err}")
+_check("custom_assign_write", "CORE", _custom_assign_write)
+
+
 # ─── TIER 2: EMBED-CRITICAL (matters for GemRB / any libpython.a host) ─
 def _threading():
     import threading
