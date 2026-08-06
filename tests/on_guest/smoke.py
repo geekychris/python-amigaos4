@@ -175,23 +175,29 @@ _check("stat", "CORE", _stat)
 
 
 def _custom_assign_write():
-    """Verify writes to EVERY mounted assign work (round-trip open+
-    write+read+delete). Catches the '/ystem:' / '/ython3:' corruption
-    class reported by Bill on his install running python3:bin/pip.
-    Tests each candidate separately so a passing SYS: doesn't hide a
-    failing python3:. Skips candidates that aren't mounted."""
+    """Verify writes to EVERY mounted assign work AND are visible to
+    AmigaDOS itself (not just to newlib's virtual FS). Newlib on OS4
+    happily accepts writes to `/VOL/path` for non-native assigns and
+    round-trips them through its own virtual layer — the file
+    round-trips through Python but does not exist as far as AmigaDOS
+    `list` is concerned. That's the false-green class this probe now
+    catches.
+
+    For each candidate:
+      1. write payload via open()
+      2. read it back via open() — Python-side round-trip
+      3. shell out to AmigaDOS `list` — cross-check real visibility
+      4. delete via os.remove"""
     # SMOKE: is created by the smoketest.script wrapper (assign SMOKE: T:)
-    # to guarantee the non-native-assign path is tested regardless of guest
-    # setup. PYTHON:/LIBS:/CLASSES: are also non-native assigns present on
-    # a stock OS4.1 boot. SYS:/T:/DH1: are native-allowlisted and pass
-    # through untranslated; python3: covers Bill's exact bug scenario when
-    # his autoinstall drawer has mounted it.
+    # to guarantee a non-native-assign is present regardless of guest
+    # setup. python3: covers Bill's exact bug scenario when his
+    # autoinstall drawer has mounted it.
     candidates = ["SMOKE:", "PYTHON:", "LIBS:", "python3:",
                   "SYS:", "System:", "T:", "DH1:"]
     tried, failed = [], []
     for prefix in candidates:
         try:
-            os.listdir(prefix)  # confirm mounted (works for VOL:)
+            os.listdir(prefix)
         except OSError:
             continue
         probe = prefix + "smoke_assign_probe.tmp"
@@ -204,22 +210,45 @@ def _custom_assign_write():
             if got != "assign_probe_payload_" + prefix:
                 failed.append(f"{prefix}: readback mismatch ({got!r})")
                 continue
-            # Verify the file was visible AT the AmigaDOS-visible path
-            # (not just the newlib-virtual one). This is the check that
-            # exposes silent-write regressions.
+            # newlib-side listdir — same virtual FS as the write; passes
+            # even for a phantom file.
             listing = os.listdir(prefix)
             if "smoke_assign_probe.tmp" not in listing:
-                failed.append(f"{prefix}: file not visible via os.listdir")
+                failed.append(f"{prefix}: not in os.listdir")
+                continue
+            # OUT-OF-BAND cross-check: spawn AmigaDOS `list` and see if
+            # the file appears in the real filesystem. If Python thinks
+            # the file exists but AmigaDOS doesn't, we've written to a
+            # newlib virtual FS — the exact silent-write failure mode
+            # Bill hit with python3:bin/pip.
+            oob_log = "T:smoke_oob.log"
+            try: os.remove(oob_log)
+            except OSError: pass
+            rc = os.system(f'list {probe} QUICK >{oob_log}')
+            oob = ""
+            try:
+                with open(oob_log, "r") as f:
+                    oob = f.read()
+            except OSError:
+                pass
+            try: os.remove(oob_log)
+            except OSError: pass
+            if "smoke_assign_probe.tmp" not in oob:
+                failed.append(
+                    f"{prefix}: FALSE-GREEN — AmigaDOS `list` did not "
+                    f"see the file (rc={rc}, oob={oob!r}); newlib "
+                    f"wrote to a virtual filesystem invisible to "
+                    f"AmigaDOS. This is Bill's bug.")
         except BaseException as e:
             failed.append(f"{prefix}: {type(e).__name__}: {e}")
         finally:
             try: os.remove(probe)
             except OSError: pass
     if not tried:
-        raise RuntimeError("no candidate assigns were mounted; test inconclusive")
+        raise RuntimeError("no candidate assigns mounted; inconclusive")
     if failed:
         raise RuntimeError(f"tried {tried}; failures: {failed}")
-    return f"write+read+delete ok under {tried}"
+    return f"write+read+oob-visible ok under {tried}"
 _check("custom_assign_write", "CORE", _custom_assign_write)
 
 
