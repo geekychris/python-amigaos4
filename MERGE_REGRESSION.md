@@ -125,3 +125,51 @@ DH1:{mock_install.py, chardet.whl, chardet.json, mock_run.script}  (fixtures)
 ```
 
 Host repo `python-amigaos4/` at `main = 8326ec7`, clean.
+
+---
+
+## Update after `d8368f3` shim-fallback fix
+
+Applied fallback (try /VOL/path first, fall back to VOL:path on
+NULL) to every path-translating shim in amiga_shim.c.
+
+**Fixed by fallback:**
+- `python-os4 -c "print('hello')"` — was silently broken, now works
+- pymain.log tracer would presumably fire too (didn't retest)
+
+**Still broken (deeper investigation needed):**
+- `python-os4 T:tiny.py` and `python-os4 DH1:tiny.py` —
+  process runs and EXITS CLEANLY (no error to stderr, no crash),
+  but the script body never actually executes. `tiny.py` is
+  `open('T:tiny.log','w').write('hello from tiny\n')` and
+  T:tiny.log is not created.
+- Even `python-os4 -c "f=open('T:x','w'); f.write('via_close'); f.close(); print('ok')"`
+  prints `ok` (via stdout redirect) but T:x is not created.
+- Even `python-os4 -c "import os; fd=os.open('T:o','wc',...); os.write(fd,b'x'); os.close(fd); print('osopen_ok')"`
+  prints `osopen_ok` but T:o is not created.
+
+**Interpretation:** every file-write from user Python code is
+silently discarded. `os.open` returns a valid-looking fd,
+`os.write` returns bytes-written, `os.close` succeeds — but no
+file appears on disk. Not a NULL fd (the fallback would catch
+that). Something like: newlib's `open("/T/foo", O_WRONLY|O_CREAT)`
+returns an fd pointing at a hidden/virtual location that AmigaDOS
+`list` doesn't see, or `open` succeeds but data is buffered
+without ever flushing to the real file.
+
+**File-arg mode (`python-os4 script.py`) failure is the same class:**
+Python opens the script, reads back 0 bytes (or something invisible),
+compiles nothing, exits normally. No user code runs. Both -V and
+`-c print` still work because they don't need Python's file I/O.
+
+**Suggested next debug step:** compile stock CPython's Python/fileutils.c
+(revert Bill's `b2fe098`) into a new build. If write-to-file then
+works, the bug is in Bill's fileutils.c edits (specifically
+`_Py_normpath_and_size`). If write still doesn't work, the bug is
+in amiga_shim's translation returning fds that don't correspond
+to real files on disk.
+
+Second option worth trying: add a printf to `amiga_open`'s
+success path to log the translated path + returned fd. Run any
+file-write test and inspect the log to see EXACTLY where newlib
+thinks the file lives.
