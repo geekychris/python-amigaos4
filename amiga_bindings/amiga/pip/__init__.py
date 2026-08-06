@@ -190,22 +190,49 @@ def _download_https(url, dst, follow_redirects=5):
         return dst
 
 
-PYPI_JSON_URL = "https://pypi.org/pypi/{name}/json"
+# Default index — PyPI's JSON API. Override per-call via install(...,
+# index_url=...) or globally by rebinding DEFAULT_INDEX_URL. Any mirror
+# that speaks Warehouse's /pypi/{name}/json shape will work: pypi.org,
+# test.pypi.org, self-hosted devpi (with the pypi_json plugin), etc.
+DEFAULT_INDEX_URL = "https://pypi.org/pypi/"
 
 
-def _fetch_pypi_json(name):
-    """Fetch and parse the PyPI JSON metadata for `name`."""
+def _fetch_json_from_index(name, index_url):
+    """Fetch and parse {index_url}/{name}/json. Returns the parsed dict
+    on 200, raises WheelError(404) / WheelError(non-200) otherwise."""
     from amiga import https as _https
-    url = PYPI_JSON_URL.format(name=name)
+    base = index_url.rstrip("/")
+    url = f"{base}/{name}/json"
     status, headers, body = _https.get(url)
     if status == 404:
-        raise WheelError(f"package not found on PyPI: {name}")
+        raise WheelError(f"not found on {index_url}: {name}")
     if status != 200:
-        raise WheelError(f"PyPI JSON {name} returned HTTP {status}")
+        raise WheelError(f"index {index_url} returned HTTP {status} for {name}")
     try:
         return _json.loads(body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as e:
-        raise WheelError(f"malformed JSON from PyPI for {name}: {e}") from e
+        raise WheelError(f"malformed JSON from {index_url} for {name}: {e}") from e
+
+
+def _fetch_pypi_json(name, index_url=None, extra_index_urls=()):
+    """Resolve `name` against `index_url`, falling through to each of
+    `extra_index_urls` on 404. Returns the parsed JSON of the first
+    index that has the package."""
+    if index_url is None:
+        index_url = DEFAULT_INDEX_URL
+    tried = [index_url] + list(extra_index_urls)
+    last_err = None
+    for idx in tried:
+        try:
+            return _fetch_json_from_index(name, idx)
+        except WheelError as e:
+            # 404 on this index → try the next one. Non-404 (network
+            # error, malformed JSON) also falls through but we save it
+            # so a failed lookup across all indexes reports something
+            # useful.
+            last_err = e
+    raise WheelError(f"{name} not found in any index (tried {len(tried)}): "
+                     f"{last_err}")
 
 
 def _canonical_name(name):
@@ -216,12 +243,21 @@ def _canonical_name(name):
 
 
 def install(name, target=None, cache_dir=None, verbose=True,
-            allow_pre=False, _visited=None):
+            allow_pre=False, index_url=None, extra_index_urls=(),
+            _visited=None):
     """Install `name` and its dependencies (pure-Python wheels only).
 
     Recursion order: resolve name → download wheel → install → read
     METADATA → for each Requires-Dist that isn't optional (extras /
     unmet marker), recurse.
+
+    Args:
+      index_url: PyPI-JSON-compatible index base URL. Default is
+        DEFAULT_INDEX_URL (pypi.org). Set to e.g.
+        "https://test.pypi.org/pypi/" for a mirror.
+      extra_index_urls: iterable of fallback indexes tried in order
+        when the primary returns 404. Mirrors pip's --extra-index-url
+        semantics.
 
     Returns a list of InstalledPackage records for everything newly
     installed this call (already-installed deps aren't listed).
@@ -251,7 +287,8 @@ def install(name, target=None, cache_dir=None, verbose=True,
 
     if verbose:
         print(f"[amiga.pip] resolving {name}...")
-    data = _fetch_pypi_json(name)
+    data = _fetch_pypi_json(name, index_url=index_url,
+                             extra_index_urls=extra_index_urls)
     rel = _r.resolve_from_json(data, allow_pre=allow_pre)
 
     # If the JSON's top-level info was for a different version than
@@ -261,7 +298,9 @@ def install(name, target=None, cache_dir=None, verbose=True,
     top_info_version = (data.get("info") or {}).get("version")
     if not reqs and top_info_version != rel.version:
         try:
-            data2 = _fetch_pypi_json(f"{name}/{rel.version}")
+            data2 = _fetch_pypi_json(f"{name}/{rel.version}",
+                                       index_url=index_url,
+                                       extra_index_urls=extra_index_urls)
         except WheelError:
             data2 = None
         if data2:
@@ -303,6 +342,8 @@ def install(name, target=None, cache_dir=None, verbose=True,
             installed_list.extend(install(
                 req_name, target=target, cache_dir=cache_dir,
                 verbose=verbose, allow_pre=allow_pre,
+                index_url=index_url,
+                extra_index_urls=extra_index_urls,
                 _visited=_visited))
         except WheelError as e:
             # A missing dep isn't fatal — report and continue so the

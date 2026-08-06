@@ -250,5 +250,105 @@ class CanonicalName(unittest.TestCase):
                              "charset-normalizer", form)
 
 
+# ---------------------------------------------------------------------------
+# Custom index / extra-index — mirror pip's --index-url / --extra-index-url
+# ---------------------------------------------------------------------------
+
+class IndexUrl(unittest.TestCase):
+
+    def setUp(self):
+        _MOCK_RESPONSES.clear()
+        _MOCK_CALLS.clear()
+        self.target = tempfile.mkdtemp(prefix="amigapip-target-")
+        self.cache = tempfile.mkdtemp(prefix="amigapip-cache-")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.target, ignore_errors=True)
+        shutil.rmtree(self.cache, ignore_errors=True)
+
+    def _script(self, index_base, name, version, deps=()):
+        """Register a mock package under a custom index base URL."""
+        wheel_bytes = _build_wheel(name, version, deps)
+        fname = _wheel_filename(name, version)
+        wheel_url = f"https://files.example.com/{fname}"
+        sha = hashlib.sha256(wheel_bytes).hexdigest()
+        j = {"info": {"name": name, "version": version,
+                      "requires_dist": list(deps)},
+             "releases": {version: [{"filename": fname, "url": wheel_url,
+                                     "digests": {"sha256": sha}}]}}
+        _MOCK_RESPONSES[f"{index_base.rstrip('/')}/{name}/json"] = (
+            200, {}, json.dumps(j).encode("utf-8"))
+        _MOCK_RESPONSES[wheel_url] = (200, {}, wheel_bytes)
+
+    def test_uses_custom_index_url(self):
+        self._script("https://test.pypi.org/pypi", "mypkg", "1.0")
+        result = amiga_pip.install(
+            "mypkg", target=self.target, cache_dir=self.cache,
+            verbose=False, index_url="https://test.pypi.org/pypi/")
+        self.assertEqual(len(result), 1)
+        # Confirm the mock saw the CUSTOM index URL, not pypi.org.
+        self.assertTrue(any("test.pypi.org" in u for u in _MOCK_CALLS),
+                        f"expected test.pypi.org call, got {_MOCK_CALLS}")
+        self.assertFalse(any("pypi.org/pypi/mypkg/json" in u
+                             and "test.pypi.org" not in u
+                             for u in _MOCK_CALLS))
+
+    def test_trailing_slash_tolerated(self):
+        # Same package registered against a base WITHOUT trailing slash.
+        # The install call passes one WITH trailing slash. Should still
+        # find it.
+        self._script("https://mirror.example.com/pypi", "pkg", "2.0")
+        result = amiga_pip.install(
+            "pkg", target=self.target, cache_dir=self.cache,
+            verbose=False, index_url="https://mirror.example.com/pypi/")
+        self.assertEqual(len(result), 1)
+
+    def test_extra_index_fallback_on_404(self):
+        # Primary index doesn't have `oddpkg`. Extra index does.
+        # (Nothing registered for primary → 404.)
+        self._script("https://internal.corp/pypi", "oddpkg", "0.5")
+        result = amiga_pip.install(
+            "oddpkg", target=self.target, cache_dir=self.cache,
+            verbose=False,
+            index_url="https://pypi.org/pypi/",
+            extra_index_urls=("https://internal.corp/pypi/",))
+        self.assertEqual(len(result), 1)
+        # Should have tried pypi.org first (got 404) then the extra.
+        self.assertTrue(any("pypi.org/pypi/oddpkg" in u for u in _MOCK_CALLS))
+        self.assertTrue(any("internal.corp" in u for u in _MOCK_CALLS))
+
+    def test_missing_from_all_indexes_raises(self):
+        # No index has the package.
+        with self.assertRaises(amiga_pip.WheelError) as cm:
+            amiga_pip.install(
+                "nowhere", target=self.target, cache_dir=self.cache,
+                verbose=False,
+                index_url="https://a.example.com/pypi/",
+                extra_index_urls=("https://b.example.com/pypi/",
+                                  "https://c.example.com/pypi/"))
+        msg = str(cm.exception)
+        self.assertIn("not found", msg)
+        self.assertIn("tried 3", msg)
+
+    def test_recursion_inherits_index(self):
+        # Dep tree: parent → child. Both on the custom index; PyPI never
+        # touched. Confirms we thread index_url through recursion.
+        self._script("https://custom.example.com/pypi", "parent", "1.0",
+                     deps=("child",))
+        self._script("https://custom.example.com/pypi", "child", "2.0")
+        result = amiga_pip.install(
+            "parent", target=self.target, cache_dir=self.cache,
+            verbose=False,
+            index_url="https://custom.example.com/pypi/")
+        names = sorted(p.name for p in result)
+        self.assertEqual(names, ["child", "parent"])
+        for url in _MOCK_CALLS:
+            if "/pypi/" in url and "/json" in url:
+                self.assertIn("custom.example.com", url,
+                    f"expected all JSON fetches to hit custom index, "
+                    f"got {url}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

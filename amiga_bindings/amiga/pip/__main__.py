@@ -13,12 +13,15 @@ import sys
 def _usage():
     print("usage: python -m amiga.pip <verb> [args]")
     print("  install PKG [--pre] [--target DIR]")
-    print("  list [--target DIR]")
+    print("             [--index-url URL] [--extra-index-url URL]...")
+    print("  list       [--target DIR]")
     print("  uninstall PKG [--target DIR]")
 
 
 def _parse_kv(args):
-    """Very small --foo VALUE parser; returns (positional, kv_dict)."""
+    """Very small --foo VALUE parser. Repeated --key VALUE builds a
+    list; single occurrences are stored as strings. Returns
+    (positional, kv_dict)."""
     pos, kv = [], {}
     i = 0
     while i < len(args):
@@ -26,7 +29,14 @@ def _parse_kv(args):
         if a.startswith("--"):
             key = a[2:]
             if i + 1 < len(args) and not args[i + 1].startswith("--"):
-                kv[key] = args[i + 1]
+                value = args[i + 1]
+                if key in kv:
+                    if isinstance(kv[key], list):
+                        kv[key].append(value)
+                    else:
+                        kv[key] = [kv[key], value]
+                else:
+                    kv[key] = value
                 i += 2
             else:
                 kv[key] = True
@@ -51,9 +61,16 @@ def main(argv=None):
         if not pos:
             _usage()
             return 2
+        # Index URL flags. --extra-index-url may repeat.
+        index_url = kv.get("index-url")
+        extra = kv.get("extra-index-url", [])
+        if isinstance(extra, str):
+            extra = [extra]
         try:
             installed = pip.install(pos[0], target=target,
-                                    allow_pre=bool(kv.get("pre")))
+                                    allow_pre=bool(kv.get("pre")),
+                                    index_url=index_url,
+                                    extra_index_urls=tuple(extra))
         except pip.WheelError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

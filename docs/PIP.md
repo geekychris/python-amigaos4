@@ -225,6 +225,107 @@ print(markdown.markdown("# Hello\n\nThis is **Markdown** on *Amiga*."))
 # <p>This is <strong>Markdown</strong> on <em>Amiga</em>.</p>
 ```
 
+## Using a custom package index
+
+By default `amiga.pip` fetches from **pypi.org**. You can point
+it at a mirror, a test index, or an internal server that speaks
+the same Warehouse JSON API (`{base}/{name}/json`).
+
+Common cases:
+
+- **Test PyPI** for pre-release packages you're validating
+- **Local devpi** for offline development or a curated mirror
+- **Internal corporate index** for private packages
+- **GitHub Releases / S3 static mirror** for a small curated
+  wheel set (useful when your Amiga has no working DNS)
+
+### From the shell
+
+```
+execute python3:scripts/pip install mypkg --index-url https://test.pypi.org/pypi/
+```
+
+Fall back to PyPI if a package isn't in the primary index:
+
+```
+execute python3:scripts/pip install mypkg
+  --index-url        https://internal.example.com/pypi/
+  --extra-index-url  https://pypi.org/pypi/
+```
+
+`--extra-index-url` may be repeated. Indexes are tried in order;
+the first one to return the package wins. This mirrors
+stock pip's semantics.
+
+### From Python
+
+```python
+import amiga.pip
+
+# Only Test PyPI
+amiga.pip.install("mypkg",
+    index_url="https://test.pypi.org/pypi/")
+
+# Internal first, PyPI as fallback
+amiga.pip.install("acme-widget",
+    index_url="https://pkg.corp.example.com/pypi/",
+    extra_index_urls=("https://pypi.org/pypi/",))
+```
+
+### Setting a global default
+
+If you always want the same index (e.g. a local mirror is
+always faster than PyPI from Amiga's slow HTTPS shell-out), set
+the module-level default at boot:
+
+```python
+import amiga.pip
+amiga.pip.DEFAULT_INDEX_URL = "https://mirror.local/pypi/"
+```
+
+Or add to `S:User-Startup` via a tiny bootstrap script:
+
+```
+setenv PYTHONHOME python3:
+setenv PYTHONPATH "python3:lib"
+python3 -c "import amiga.pip; amiga.pip.DEFAULT_INDEX_URL='https://mirror.local/pypi/'; print('using mirror')"
+```
+
+### Example: Test PyPI end-to-end
+
+Test PyPI hosts alpha/beta releases that maintainers upload
+before promoting to real PyPI. It's a good target for verifying
+your index-URL setup because it exists and uses the same
+JSON-API format.
+
+```
+execute python3:scripts/pip install six
+  --index-url https://test.pypi.org/pypi/
+  --pre
+```
+
+The `--pre` flag lets us pick pre-release versions (test.pypi
+frequently only has those).
+
+### Format requirements
+
+The custom index must speak the **Warehouse `/pypi/{name}/json`
+API** — the same shape pypi.org serves. That includes:
+
+- pypi.org and test.pypi.org (obvious)
+- **devpi** with the `devpi-server` default config
+- **pypiserver** with `--pypi-package-listing` enabled
+- Anything that reverse-proxies to a real PyPI
+
+It does **not** yet include:
+
+- Plain PEP 503 "simple" index (HTML file listing) — devpi's
+  `/root/pypi/+simple/` for example
+- Artifactory's `/api/pypi/pypi/simple/`
+- Bare directories of wheels served by nginx
+
+Support for the simple API is on the roadmap.
+
 ## Advanced: version pinning
 
 ```python
@@ -308,6 +409,9 @@ python3 -c "from amiga.pip import install_wheel; install_wheel('DH1:downloads/si
 - **No version specifiers in the CLI yet** — always installs the
   latest stable. Use the programmatic path shown above for
   pinning.
+- **Custom index must speak the Warehouse JSON API** — plain
+  PEP 503 "simple" indexes (HTML listing) don't work yet. See
+  "Format requirements" under the custom-index section.
 
 ## When things go wrong
 
@@ -350,6 +454,9 @@ No module named 'importlib.resources'`**:
 
 - Version specifier syntax in the CLI (`pip install six>=1.15`)
 - `--target` flag support in the shell launcher
+- PEP 503 simple-index parser (HTML listing) — lets you point
+  at devpi's `/+simple/`, Artifactory's `/simple/`, or a plain
+  directory of wheels served over HTTP
 - Optional AmiSSL-free HTTP-only mode (for pypi mirrors that
   serve HTTP — mostly for CI/testing)
 - A curated wheel mirror on GitHub Releases for the "just works"
