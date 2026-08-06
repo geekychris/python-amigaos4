@@ -50,7 +50,13 @@ if [ ! -f "$STRIPPED" ]; then
 fi
 
 # 2. Clean and create stage directory
-rm -rf "$STAGE_DIR" 2>/dev/null || true
+if [ -d "$STAGE_DIR" ]; then
+    rm -rf "$STAGE_DIR"
+fi
+if [ -e "$STAGE_DIR" ]; then
+    echo "ERROR: Failed to remove staging directory $STAGE_DIR" >&2
+    exit 1
+fi
 mkdir -p "$STAGE_DIR/C"
 mkdir -p "$STAGE_DIR/System/python3"
 
