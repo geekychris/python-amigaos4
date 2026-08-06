@@ -9,8 +9,11 @@ entry gets re-downloaded.
 `DH1:pip-cache` for persistence.
 """
 from __future__ import annotations
-import hashlib
 import os
+# NB: hashlib import deferred to sha256_file() — on OS4 the CPython
+# port's hashlib pulls AmiSSL open at import time (5-15s stall while
+# amissl.library loads). Defer so `import amiga.pip.cache` is cheap
+# and only the actual hash operation pays that cost.
 
 
 DEFAULT_CACHE_DIR = "T:pip-cache"
@@ -36,6 +39,7 @@ def cache_path_for(url_or_filename, cache_dir=None):
 
 def sha256_file(path, chunk_size=65536):
     """Streaming SHA-256 of a file. Returns hex digest."""
+    import hashlib
     h = hashlib.sha256()
     with open(path, "rb") as f:
         while True:

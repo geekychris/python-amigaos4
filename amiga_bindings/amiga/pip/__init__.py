@@ -26,12 +26,12 @@ Real pip is still shipped in DH1:lib/ensurepip/_bundled/ (the wheel).
 `python -m pip` will fail at any subprocess boundary, but you can
 still `import pip; pip.__version__` for library-level use.
 """
-import hashlib
 import json as _json
 import os
 import sys
 import zipfile
 from collections import namedtuple
+# hashlib intentionally NOT imported at module level — see cache.py.
 
 InstalledPackage = namedtuple(
     "InstalledPackage", "name version dist_info_dir"
