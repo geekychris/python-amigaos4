@@ -188,7 +188,11 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
         size_t vol_len = (size_t)(colon - path);
         const char *rest = colon + 1;
         if (rest[0] == '/' || rest[0] == '\\') ++rest;
-        snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
+        int n = snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
+        if (n < 0 || (size_t)n >= buflen) {
+            errno = ENAMETOOLONG;
+            return NULL;
+        }
         return buf;
     }
 
@@ -216,25 +220,32 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 int amiga_stat(const char *path, struct stat *buf)
 {
     char pbuf[1024];
-    return stat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return stat(tp, buf);
 }
 
 int amiga_lstat(const char *path, struct stat *buf)
 {
     char pbuf[1024];
-    return lstat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return lstat(tp, buf);
 }
 
 int amiga_access(const char *path, int mode)
 {
     char pbuf[1024];
-    return access(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return access(tp, mode);
 }
 
 int amiga_open(const char *path, int flags, ...)
 {
     char pbuf[1024];
     const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
     mode_t mode = 0;
     if (flags & O_CREAT) {
         va_list ap;
@@ -248,56 +259,74 @@ int amiga_open(const char *path, int flags, ...)
 DIR *amiga_opendir(const char *name)
 {
     char pbuf[1024];
-    return opendir(amiga_to_posix_path(name, pbuf, sizeof(pbuf)));
+    const char *tp = amiga_to_posix_path(name, pbuf, sizeof(pbuf));
+    if (!tp) return NULL;
+    return opendir(tp);
 }
 
 FILE *amiga_fopen(const char *filename, const char *mode)
 {
     char pbuf[1024];
-    return fopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode);
+    const char *tp = amiga_to_posix_path(filename, pbuf, sizeof(pbuf));
+    if (!tp) return NULL;
+    return fopen(tp, mode);
 }
 
 FILE *amiga_freopen(const char *filename, const char *mode, FILE *stream)
 {
     char pbuf[1024];
-    return freopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode, stream);
+    const char *tp = amiga_to_posix_path(filename, pbuf, sizeof(pbuf));
+    if (!tp) return NULL;
+    return freopen(tp, mode, stream);
 }
 
 int amiga_chdir(const char *path)
 {
     char pbuf[1024];
-    return chdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return chdir(tp);
 }
 
 int amiga_mkdir(const char *path, mode_t mode)
 {
     char pbuf[1024];
-    return mkdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return mkdir(tp, mode);
 }
 
 int amiga_rmdir(const char *path)
 {
     char pbuf[1024];
-    return rmdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return rmdir(tp);
 }
 
 int amiga_unlink(const char *path)
 {
     char pbuf[1024];
-    return unlink(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return unlink(tp);
 }
 
 int amiga_remove(const char *path)
 {
     char pbuf[1024];
-    return remove(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
+    return remove(tp);
 }
 
 int amiga_rename(const char *oldpath, const char *newpath)
 {
     char oldbuf[1024], newbuf[1024];
     const char *to = amiga_to_posix_path(oldpath, oldbuf, sizeof(oldbuf));
+    if (!to) return -1;
     const char *tn = amiga_to_posix_path(newpath, newbuf, sizeof(newbuf));
+    if (!tn) return -1;
     int r = rename(to, tn);
     if (r != 0 && (to != oldpath || tn != newpath)) {
         errno = 0; r = rename(oldpath, newpath);
@@ -309,6 +338,7 @@ char *amiga_realpath(const char *path, char *resolved_path)
 {
     char pbuf[1024];
     const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return NULL;
     char *r = realpath(tp, resolved_path);
     if (!r && tp != path) { errno = 0; r = realpath(path, resolved_path); }
     return r;
@@ -318,6 +348,7 @@ ssize_t amiga_readlink(const char *path, char *buf, size_t bufsiz)
 {
     char pbuf[1024];
     const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
     ssize_t r = readlink(tp, buf, bufsiz);
     if (r < 0 && tp != path) { errno = 0; r = readlink(path, buf, bufsiz); }
     return r;
@@ -327,6 +358,7 @@ int amiga_chmod(const char *path, mode_t mode)
 {
     char pbuf[1024];
     const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
     int r = chmod(tp, mode);
     if (r != 0 && tp != path) { errno = 0; r = chmod(path, mode); }
     return r;
@@ -336,6 +368,7 @@ int amiga_utime(const char *filename, const struct utimbuf *times)
 {
     char pbuf[1024];
     const char *tp = amiga_to_posix_path(filename, pbuf, sizeof(pbuf));
+    if (!tp) return -1;
     int r = utime(tp, times);
     if (r != 0 && tp != filename) { errno = 0; r = utime(filename, times); }
     return r;
