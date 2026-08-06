@@ -138,8 +138,9 @@ run_build_steps() {
 
 if command -v docker >/dev/null 2>&1; then
     docker run --rm -v "$HERE:/work" "$IMAGE" bash -c "
+    export SRC='$SRC'
     $(declare -f run_build_steps)
-    run_build_steps '${1:-make}' '/work' '/tmp/build-ppc-amigaos-750'
+    run_build_steps '${1:-make}' '/work' '/work/$BUILD'
     "
 else
     run_build_steps "${1:-make}" "$HERE" "$HERE/$BUILD"
