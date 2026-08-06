@@ -26,23 +26,30 @@ for arg in "$@"; do
 done
 
 cd "$REPO"
-./build.sh "$mode"
+if [ -f "./build-750.sh" ]; then
+    ./build-750.sh "$mode"
+else
+    ./build.sh "$mode"
+fi
 
 if [ "$strip_after" -eq 1 ] && [ "$mode" != "clean" ] && [ "$mode" != "shell" ]; then
     echo
-    echo "=== stripping build-ppc-amigaos/python.exe -> python-stripped.exe ==="
+    BDIR="build-ppc-amigaos-750"
+    [ ! -d "$REPO/$BDIR" ] && BDIR="build-ppc-amigaos"
+    echo "=== stripping $BDIR/python.exe -> python-stripped.exe ==="
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
             -v "$REPO:/work" \
-            -w /work/build-ppc-amigaos \
+            -w "/work/$BDIR" \
             amiga-python-build:local \
             bash -c 'export PATH=/opt/ppc-amigaos/bin:$PATH; \
                      ppc-amigaos-strip -o python-stripped.exe python.exe && \
                      ls -la python-stripped.exe'
     else
         export PATH=/opt/ppc-amigaos/bin:$PATH
-        ppc-amigaos-strip -o "$REPO/build-ppc-amigaos/python-stripped.exe" "$REPO/build-ppc-amigaos/python.exe"
-        ls -la "$REPO/build-ppc-amigaos/python-stripped.exe"
+        ppc-amigaos-strip -o "$REPO/$BDIR/python-stripped.exe" "$REPO/$BDIR/python.exe"
+        cp -f "$REPO/$BDIR/python-stripped.exe" "$REPO/build-ppc-amigaos/python-stripped.exe" 2>/dev/null || true
+        ls -la "$REPO/$BDIR/python-stripped.exe"
     fi
 fi
 

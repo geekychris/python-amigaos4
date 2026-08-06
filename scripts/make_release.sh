@@ -35,10 +35,13 @@ STAGE_DIR="$RELEASES_DIR/$REL_NAME"
 echo "=== Building Release Package: $REL_NAME ==="
 
 # 1. Ensure executable is built and stripped
-STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
+STRIPPED="$REPO/build-ppc-amigaos-750/python-stripped.exe"
+[ ! -f "$STRIPPED" ] && STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
 if [ ! -f "$STRIPPED" ]; then
     echo "Executable $STRIPPED not found. Running build and strip..."
     "$REPO/scripts/build.sh" --strip
+    STRIPPED="$REPO/build-ppc-amigaos-750/python-stripped.exe"
+    [ ! -f "$STRIPPED" ] && STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
 fi
 
 if [ ! -f "$STRIPPED" ]; then
@@ -127,7 +130,8 @@ mkdir -p "$SDK_DIR/include/python3.12"
 mkdir -p "$SDK_DIR/lib"
 
 cp -r "$REPO/Python-3.12.7/Include"/* "$SDK_DIR/include/python3.12/" 2>/dev/null || true
-BUILD_DIR="$REPO/build-ppc-amigaos"
+BUILD_DIR="$REPO/build-ppc-amigaos-750"
+[ ! -d "$BUILD_DIR" ] && BUILD_DIR="$REPO/build-ppc-amigaos"
 if [ -f "$BUILD_DIR/pyconfig.h" ]; then
     cp "$BUILD_DIR/pyconfig.h" "$SDK_DIR/include/python3.12/"
 elif [ -f "$REPO/Python-3.12.7/pyconfig.h" ]; then

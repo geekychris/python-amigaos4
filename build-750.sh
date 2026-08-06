@@ -50,9 +50,9 @@ run_build_steps() {
 
     # PowerPC 750 is a suitable common G3/G4-era AmigaOS 4 baseline.
     # GCC supplies its native AmigaOS gthread implementation through -athread=native at link time.
-    export CFLAGS_BASE="-mcrt=newlib -mhard-float -O2 -mcpu=750 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+    export CFLAGS_BASE="-mcrt=newlib -mhard-float -O2 -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
     export CFLAGS="$CFLAGS_BASE"
-    export LDFLAGS="-mcrt=newlib -mcpu=750 -athread=native -lauto"
+    export LDFLAGS="-mcrt=newlib -mcpu=750 -mno-altivec -mno-powerpc64 -athread=native -lauto"
 
     export LDSHARED="ppc-amigaos-gcc -shared"
     export LINKCC="ppc-amigaos-gcc"
