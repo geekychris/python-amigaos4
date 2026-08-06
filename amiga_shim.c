@@ -141,6 +141,11 @@ __attribute__((constructor)) static void amiga_suppress_requesters(void)
 
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
+    /* Bill's original: translate VOL:path → /VOL/path so newlib
+     * doesn't prepend CWD (fixes commit 130d850's corruption). The
+     * shim callers add a fallback to the un-translated path on
+     * NULL/-1 return, which recovers pre-shim behaviour for paths
+     * where translation fails. */
     if (!path || !*path || !buf || buflen < 4) return path;
     if (path[0] == '/') return path;
 

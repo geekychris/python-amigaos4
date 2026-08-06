@@ -173,3 +173,57 @@ Second option worth trying: add a printf to `amiga_open`'s
 success path to log the translated path + returned fd. Run any
 file-write test and inspect the log to see EXACTLY where newlib
 thinks the file lives.
+
+---
+
+## Update after fileutils.c bisect (still `f402c7d`-class state)
+
+**Bisect result: Bill's fileutils.c is NOT the cause.**
+
+Replaced Bill's `Python/fileutils.c` with stock CPython 3.12.7,
+rebuilt, deployed. Same behavior:
+- `python-os4 -V` prints version ✓
+- `python-os4 -c "print"` prints ✓
+- `python-os4 tiny.py` where tiny.py is `open('T:x','w').write('y')`
+  — completes normally but NO FILE is created ✗
+
+So Bill's `_Py_normpath_and_size` edits are innocent. Restored
+his fileutils.c.
+
+**Also tried:** changing `amiga_to_posix_path` from `/VOL/path`
+to `/VOL:path` (Bill's earlier commit `602c5ac` form — leading
+slash but colon preserved). That form made things WORSE — even
+`-c "print"` stopped producing output. Reverted.
+
+**Confirmed suspect: `amiga_open` returns valid-looking fds that
+don't correspond to real disk files.** The shim's `open(tp, ...)`
+call succeeds where `tp = "/T/foo"` (newlib accepts the form
+but writes go into a virtual/hidden location that AmigaDOS
+`list` doesn't see). Fallback doesn't fire because open
+succeeded. Every user-code file write silently discarded.
+Every user-code file read gets 0 bytes.
+
+**What actually needs to happen (not doable this session):**
+
+1. Bill's `amiga_open` needs a post-open `fstat` check — if the
+   fd points at a file with no size and the write should have
+   created content, retry with the untranslated path.
+
+2. OR: `amiga_to_posix_path` should be smarter about which
+   paths NEED translation (probably only when the volume name
+   is a python3-style ASSIGN that newlib mishandles), leaving
+   plain volume paths like `T:foo` alone.
+
+3. OR: use `IDOS->NameFromFH(fh)` after open to verify the
+   file was actually created at the expected location.
+
+Any of these needs Bill's input on what he was trying to fix
+originally.
+
+## Regression suite added
+
+`tests/on_guest/smoke.py` — 10-probe minimum-viable regression
+sweep that would have caught this on the first deploy attempt.
+Includes `write_file_via_open` and `write_file_via_os_open` as
+independent probes — either one would have flagged the bug
+with a specific failure message.
