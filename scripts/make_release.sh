@@ -50,7 +50,7 @@ if [ ! -f "$STRIPPED" ]; then
 fi
 
 # 2. Clean and create stage directory
-rm -rf "$STAGE_DIR"
+rm -rf "$STAGE_DIR" 2>/dev/null || true
 mkdir -p "$STAGE_DIR/C"
 mkdir -p "$STAGE_DIR/System/python3"
 

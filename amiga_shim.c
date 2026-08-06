@@ -128,6 +128,7 @@ int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex)
 }
 
 #include <proto/exec.h>
+#include <proto/dos.h>
 #include <dos/dos.h>
 __attribute__((constructor)) static void amiga_suppress_requesters(void)
 {
@@ -137,17 +138,27 @@ __attribute__((constructor)) static void amiga_suppress_requesters(void)
             proc->pr_WindowPtr = (APTR)-1;
         }
     }
+    if (IDOS) {
+        SetProcWindow((APTR)-1);
+    }
 }
 
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
-    /* Bill's original: translate VOL:path → /VOL/path so newlib
-     * doesn't prepend CWD (fixes commit 130d850's corruption). The
-     * shim callers add a fallback to the un-translated path on
-     * NULL/-1 return, which recovers pre-shim behaviour for paths
-     * where translation fails. */
     if (!path || !*path || !buf || buflen < 4) return path;
-    if (path[0] == '/') return path;
+
+    /* Handle /VOL:rest or /VOL:/rest forms */
+    if (path[0] == '/') {
+        const char *colon = strchr(path, ':');
+        if (colon) {
+            size_t prefix_len = (size_t)(colon - path);
+            const char *rest = colon + 1;
+            if (rest[0] == '/' || rest[0] == '\\') ++rest;
+            snprintf(buf, buflen, "%.*s/%s", (int)prefix_len, path, rest);
+            return buf;
+        }
+        return path;
+    }
 
     const char *colon = strchr(path, ':');
     const char *slash = strchr(path, '/');
@@ -161,6 +172,28 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
         snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
         return buf;
     }
+
+    /* If relative path starts with a known volume/assign name e.g. "System/...", "python3/..." */
+    if (slash && slash > path) {
+        size_t seg_len = (size_t)(slash - path);
+        if (seg_len == 6 && strncasecmp(path, "System", 6) == 0) {
+            snprintf(buf, buflen, "/%s", path);
+            return buf;
+        }
+        if (seg_len == 7 && strncasecmp(path, "python3", 7) == 0) {
+            snprintf(buf, buflen, "/%s", path);
+            return buf;
+        }
+        if (seg_len == 3 && (strncasecmp(path, "SYS", 3) == 0 || strncasecmp(path, "RAM", 3) == 0)) {
+            snprintf(buf, buflen, "/%s", path);
+            return buf;
+        }
+        if (seg_len == 4 && strncasecmp(path, "Work", 4) == 0) {
+            snprintf(buf, buflen, "/%s", path);
+            return buf;
+        }
+    }
+
     return path;
 }
 
