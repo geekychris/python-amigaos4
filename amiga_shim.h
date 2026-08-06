@@ -113,6 +113,56 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex);
 #define pthread_mutex_destroy amiga_pthread_mutex_destroy
 
+/* -------------------------------------------------------------------------
+ * AmigaOS path normalization shims — OS4 newlib POSIX path translation
+ * requires absolute paths to start with '/'. If an Amiga path with a volume
+ * colon (e.g. "python3:lib", "System:System/python3") is passed to file functions
+ * without a leading '/', newlib treats it as relative to CWD, prepending CWD
+ * and corrupting the volume string into "/ython3:" or "/ystem:".
+ * ---------------------------------------------------------------------- */
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <stdarg.h>
+#include <utime.h>
+
+const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen);
+int amiga_stat(const char *path, struct stat *buf);
+int amiga_lstat(const char *path, struct stat *buf);
+int amiga_access(const char *path, int mode);
+int amiga_open(const char *path, int flags, ...);
+DIR *amiga_opendir(const char *name);
+FILE *amiga_fopen(const char *filename, const char *mode);
+FILE *amiga_freopen(const char *filename, const char *mode, FILE *stream);
+int amiga_chdir(const char *path);
+int amiga_mkdir(const char *path, mode_t mode);
+int amiga_rmdir(const char *path);
+int amiga_unlink(const char *path);
+int amiga_remove(const char *path);
+int amiga_rename(const char *oldpath, const char *newpath);
+char *amiga_realpath(const char *path, char *resolved_path);
+ssize_t amiga_readlink(const char *path, char *buf, size_t bufsiz);
+int amiga_chmod(const char *path, mode_t mode);
+int amiga_utime(const char *filename, const struct utimbuf *times);
+
+#define stat(p, b) amiga_stat(p, b)
+#define lstat(p, b) amiga_lstat(p, b)
+#define access(p, m) amiga_access(p, m)
+#define open(p, ...) amiga_open(p, __VA_ARGS__)
+#define opendir(n) amiga_opendir(n)
+#define fopen(f, m) amiga_fopen(f, m)
+#define freopen(f, m, s) amiga_freopen(f, m, s)
+#define chdir(p) amiga_chdir(p)
+#define mkdir(p, m) amiga_mkdir(p, m)
+#define rmdir(p) amiga_rmdir(p)
+#define unlink(p) amiga_unlink(p)
+#define remove(p) amiga_remove(p)
+#define rename(o, n) amiga_rename(o, n)
+#define realpath(p, r) amiga_realpath(p, r)
+#define readlink(p, b, s) amiga_readlink(p, b, s)
+#define chmod(p, m) amiga_chmod(p, m)
+#define utime(f, t) amiga_utime(f, t)
+
 #ifdef __cplusplus
 }
 #endif

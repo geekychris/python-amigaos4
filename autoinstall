@@ -55,13 +55,24 @@ Else
 EndIf
 
 Echo ""
-Echo "Step 3: Setting persistent environment variables..."
+Echo "Step 3: Setting script protection bits on helper tools..."
+If EXISTS SYS:System/python3/bin/pip3
+    Protect SYS:System/python3/bin/pip3 +s +e >NIL:
+    Echo "  -> Set script (+s) and execute (+e) bits on SYS:System/python3/bin/pip3"
+EndIf
+If EXISTS SYS:System/python3/bin/pip
+    Protect SYS:System/python3/bin/pip +s +e >NIL:
+    Echo "  -> Set script (+s) and execute (+e) bits on SYS:System/python3/bin/pip"
+EndIf
+
+Echo ""
+Echo "Step 4: Setting persistent environment variables..."
 SetEnv PYTHONHOME SAVE python3: >NIL:
-SetEnv PYTHONPATH SAVE python3:lib >NIL:
+SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages >NIL:
 Echo "  -> Set persistent PYTHONHOME and PYTHONPATH in ENVARC:"
 
 Echo ""
-Echo "Step 4: Validating and configuring system assigns..."
+Echo "Step 5: Validating and configuring system assigns and path..."
 If EXISTS python3:
     Echo "  -> Assign 'python3:' is active."
 Else
@@ -73,8 +84,9 @@ If EXISTS S:User-Startup
     Echo "" >> S:User-Startup
     Echo "; --- Python 3.12.7 for AmigaOS 4 ---" >> S:User-Startup
     Echo "Assign python3: SYS:System/python3" >> S:User-Startup
+    Echo "Path python3:bin ADD" >> S:User-Startup
     Echo "; --- End Python 3 ---" >> S:User-Startup
-    Echo "  -> Added 'Assign python3: SYS:System/python3' to S:User-Startup"
+    Echo "  -> Added 'Assign python3:' and 'Path python3:bin ADD' to S:User-Startup"
 EndIf
 
 Echo ""
@@ -87,6 +99,7 @@ Else
 EndIf
 
 Echo "  Python 3.12.7 home   : SYS:System/python3 [OK]"
+Echo "  Python 3.12.7 bin    : SYS:System/python3/bin [OK]"
 Echo ""
 Echo " Installation Complete!"
 Echo " Test installation by running in Shell: python3 --version"

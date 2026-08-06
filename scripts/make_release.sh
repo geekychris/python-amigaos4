@@ -5,6 +5,9 @@
 #   releases/python3-amigaos4-3.12.7/
 #   ├── C/
 #   │   └── python3                     (Stripped PowerPC ELF executable)
+#   ├── SDK/
+#   │   ├── include/python3.12/         (Python 3.12 C API headers + amiga_shim.h)
+#   │   └── lib/                        (libpython3.12.a, libamiga_shim.a, libamissl_lazy.a)
 #   └── System/
 #       └── python3/                    (Main Python 3 files)
 #           ├── lib/                    (Python 3.12.7 Standard Library)
@@ -17,8 +20,7 @@
 #               └── Package-Startup     (Environment variables for S:User-Startup)
 #
 # Output Archives:
-#   releases/python3-amigaos4-3.12.7.zip
-#   releases/python3-amigaos4-3.12.7.lha (if lha tool available)
+#   releases/python3-amigaos4-3.12.7.lha
 
 set -euo pipefail
 
@@ -33,10 +35,13 @@ STAGE_DIR="$RELEASES_DIR/$REL_NAME"
 echo "=== Building Release Package: $REL_NAME ==="
 
 # 1. Ensure executable is built and stripped
-STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
+STRIPPED="$REPO/build-ppc-amigaos-750/python-stripped.exe"
+[ ! -f "$STRIPPED" ] && STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
 if [ ! -f "$STRIPPED" ]; then
     echo "Executable $STRIPPED not found. Running build and strip..."
     "$REPO/scripts/build.sh" --strip
+    STRIPPED="$REPO/build-ppc-amigaos-750/python-stripped.exe"
+    [ ! -f "$STRIPPED" ] && STRIPPED="$REPO/build-ppc-amigaos/python-stripped.exe"
 fi
 
 if [ ! -f "$STRIPPED" ]; then
@@ -78,25 +83,31 @@ rm -rf "$SYS_DIR/lib/sqlite3/test"
 find "$SYS_DIR/lib" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find "$SYS_DIR/lib" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# 5. Pre-install pip into site-packages and create C/pip3 launcher
+# 5. Pre-install pip into site-packages and create System/python3/bin & C/pip3 launchers
 echo "-> Pre-installing pip into System/python3/lib/site-packages..."
 mkdir -p "$SYS_DIR/lib/site-packages"
 python3 -c "import zipfile; zipfile.ZipFile('$STDLIB_SRC/ensurepip/_bundled/pip-24.2-py3-none-any.whl').extractall('$SYS_DIR/lib/site-packages')"
 
-echo "-> Creating C/pip3 launcher script..."
-cat << 'EOF' > "$STAGE_DIR/C/pip3"
+echo "-> Creating System/python3/bin helper tools..."
+mkdir -p "$SYS_DIR/bin"
+if [ -d "$REPO/bin" ]; then
+    cp -r "$REPO/bin"/* "$SYS_DIR/bin/"
+else
+    cat << 'EOF' > "$SYS_DIR/bin/pip3"
 .key ARGS/F
 python3 -m pip <ARGS>
 EOF
-chmod +x "$STAGE_DIR/C/pip3"
+    cp -f "$SYS_DIR/bin/pip3" "$SYS_DIR/bin/pip"
+fi
+chmod +x "$SYS_DIR/bin"/* 2>/dev/null || true
 
-# 6. Copy Amiga Bindings
-echo "-> Copying amiga_bindings to System/python3/amiga_bindings..."
+cp -f "$SYS_DIR/bin/pip3" "$STAGE_DIR/C/pip3" 2>/dev/null || true
+
+# 6. Copy Amiga Bindings, Examples, Docs, and License
+echo "-> Copying amiga_bindings, examples, and documentation..."
 mkdir -p "$SYS_DIR/amiga_bindings"
 cp -r "$REPO/amiga_bindings"/* "$SYS_DIR/amiga_bindings/"
 
-# 6. Copy Examples, Docs, and License
-echo "-> Copying examples and documentation..."
 mkdir -p "$SYS_DIR/examples"
 cp -r "$REPO/examples"/* "$SYS_DIR/examples/"
 
@@ -112,32 +123,65 @@ fi
 [ -f "$REPO/Install-Python3.info" ] && cp "$REPO/Install-Python3.info" "$STAGE_DIR/Install-Python3.info"
 [ -f "$REPO/autoinstall" ] && cp "$REPO/autoinstall" "$STAGE_DIR/autoinstall"
 
+# 7. Package SDK headers and static libraries into SDK/
+echo "-> Packaging SDK headers and static libraries into SDK/..."
+SDK_DIR="$STAGE_DIR/SDK"
+mkdir -p "$SDK_DIR/include/python3.12"
+mkdir -p "$SDK_DIR/lib"
 
-# 7. Create Startup Script Snippet
+cp -r "$REPO/Python-3.12.7/Include"/* "$SDK_DIR/include/python3.12/" 2>/dev/null || true
+BUILD_DIR="$REPO/build-ppc-amigaos-750"
+[ ! -d "$BUILD_DIR" ] && BUILD_DIR="$REPO/build-ppc-amigaos"
+if [ -f "$BUILD_DIR/pyconfig.h" ]; then
+    cp "$BUILD_DIR/pyconfig.h" "$SDK_DIR/include/python3.12/"
+elif [ -f "$REPO/Python-3.12.7/pyconfig.h" ]; then
+    cp "$REPO/Python-3.12.7/pyconfig.h" "$SDK_DIR/include/python3.12/"
+fi
+cp "$REPO/amiga_shim.h" "$SDK_DIR/include/python3.12/amiga_shim.h"
+
+if [ -f "$BUILD_DIR/libpython3.12.a" ]; then
+    cp "$BUILD_DIR/libpython3.12.a" "$SDK_DIR/lib/libpython3.12.a"
+    cp "$BUILD_DIR/libpython3.12.a" "$SDK_DIR/lib/libpython.a"
+fi
+if [ -f "$BUILD_DIR/libamiga_shim.a" ]; then
+    cp "$BUILD_DIR/libamiga_shim.a" "$SDK_DIR/lib/libamiga_shim.a"
+fi
+if [ -f "$BUILD_DIR/libamissl_lazy.a" ]; then
+    cp "$BUILD_DIR/libamissl_lazy.a" "$SDK_DIR/lib/libamissl_lazy.a"
+fi
+
+# 8. Create Startup Script Snippet
 echo "-> Creating S/Package-Startup..."
 mkdir -p "$SYS_DIR/S"
 cat << 'EOF' > "$SYS_DIR/S/Package-Startup"
 ; Python 3.12 for AmigaOS 4.1
-; Add this line to your S:User-Startup:
-Assign python3: System:python3
+; Add these lines to your S:User-Startup:
+Assign python3: SYS:System/python3
+Path python3:bin ADD
 
 ; Run these commands once in a Shell to persist environment variables:
 SetEnv PYTHONHOME SAVE python3:
-SetEnv PYTHONPATH SAVE python3:lib
+SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages
 EOF
 
-# 8. Create LHA archive using Docker's lha tool
+# 9. Create LHA archive
 cd "$RELEASES_DIR"
 LHA_FILE="${REL_NAME}.lha"
-echo "-> Creating LHA archive ${LHA_FILE} via Docker..."
-docker run --rm -v "$RELEASES_DIR:/work" amiga-python-build:local bash -c \
-    "cd /work && lha a ${LHA_FILE} ${REL_NAME}"
+echo "-> Creating LHA archive ${LHA_FILE}..."
+if command -v docker >/dev/null 2>&1; then
+    docker run --rm -v "$RELEASES_DIR:/work" amiga-python-build:local bash -c \
+        "cd /work && lha a ${LHA_FILE} ${REL_NAME}"
+else
+    rm -f "${LHA_FILE}"
+    lha a "${LHA_FILE}" "${REL_NAME}"
+fi
 
 echo
 echo "=== Release Build Complete ==="
 echo "Directory:   $STAGE_DIR"
 echo "Binary:      $STAGE_DIR/C/python3 ($(wc -c < "$STAGE_DIR/C/python3" | tr -d ' ') bytes)"
 echo "Lib tree:    $SYS_DIR/lib"
+echo "SDK:         $SDK_DIR"
 if [ -f "$RELEASES_DIR/${LHA_FILE}" ]; then
     echo "LHA Package: $RELEASES_DIR/${LHA_FILE} ($(wc -c < "$RELEASES_DIR/${LHA_FILE}" | tr -d ' ') bytes)"
 fi
