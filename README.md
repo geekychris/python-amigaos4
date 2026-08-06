@@ -28,7 +28,7 @@ threading`, `import ssl` all work.
 | Threads (Lock/RLock/Sem/Event/ThreadPoolExecutor) | `_thread` + threading + concurrent.futures |
 | SQLite 3.34.0 | `_sqlite3` static builtin over the SDK's libsqlite3.a |
 | zlib decompression | `zlib` static builtin |
-| pip 24.2 (bundled) — install pure-Python wheels | `amiga.pip.install_wheel()` |
+| **pip install** — resolve + fetch + install pure-Python wheels from PyPI | `amiga.pip.install(name)` — subprocess-free ([docs/PIP.md](docs/PIP.md)) |
 | `import ssl` / `import hashlib` (optional) | statically linked against AmiSSL, opens `amissl.library` **lazily** on first import |
 | HTTPS GET end-to-end | `amiga.https.get(url)` shell-out through `openssl s_client` (works around a fd-interop bug between `_ssl` and `_socket`) |
 | Real Intuition windows | `_amiga.open_window` / `draw_text` / `wait_message` |
@@ -178,6 +178,32 @@ PYTHONHOME/PYTHONPATH then run the matching `.py`. See
 
 **Detailed docs + screenshots:** [docs/DEMOS.md](docs/DEMOS.md).
 
+## Installing packages from PyPI
+
+`python -m pip install X` doesn't run on OS4 (no `fork()`), so
+the port ships **`amiga.pip`** — a subprocess-free in-process
+installer for pure-Python wheels.
+
+```
+execute python3:scripts/pip install six
+execute python3:scripts/pip install requests
+execute python3:scripts/pip list
+execute python3:scripts/pip uninstall six
+```
+
+Or from Python:
+
+```python
+import amiga.pip
+amiga.pip.install("python-dateutil")   # follows dependencies
+```
+
+Requires AmiSSL installed + guest network configured + system
+clock within 24h of UTC. Only `py3-none-any` wheels are
+supported (no compiled extensions).
+
+**Full guide:** [docs/PIP.md](docs/PIP.md).
+
 ## Tests
 
 `tests/` — a small custom runner that produces one-line
@@ -255,9 +281,11 @@ Not yet solved:
   model. Users needing subprocess-style workflows should use
   `amiga.os.run()` (shell-out via `System()`) or `amiga.exec.MsgPort`
   for local IPC.
-- **Interactive `python -m pip install`** — subprocess boundary
-  crosses into the `fork` gap above. Programmatic path via
-  `amiga.pip.install_wheel(path)` works today.
+- **Stock `python -m pip install`** — pip's own subprocess-based
+  build backend won't run without `fork()`. We ship
+  `amiga.pip` (see [docs/PIP.md](docs/PIP.md)) as a drop-in for
+  pure-Python-wheel installs. Compiled-extension packages
+  (numpy, cryptography, etc.) still need a build-out story.
 - **Native `ctypes` / `_decimal` / `pyexpat`** — currently
   `*disabled*`. Blocked on either the walkero SDK layout
   (no libffi headers in scope) or on newlib API gaps.

@@ -90,6 +90,18 @@ python3 python3:examples/snake_verifiable.py        # + audit log
 
 See `docs/DEMOS.md` for screenshots + Mac↔Amiga snake comparison.
 
+## Installing third-party packages
+
+Real `pip install X` doesn't work here (`fork()` gap), so use
+the in-process installer `amiga.pip`. Quickest path:
+
+```
+execute python3:scripts/pip install six
+python3 -c "import six; print(six.__version__)"
+```
+
+Full walkthrough: [PIP.md](PIP.md).
+
 ## Housekeeping
 
 The AmigaBridge daemon accumulates temp files under `T:` (script

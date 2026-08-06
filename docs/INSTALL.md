@@ -164,6 +164,20 @@ Should pop a "Python Clock" window on Workbench.  Ctrl-C from the
 originating shell won't kill it — click the close gadget or press
 ESC.  See [DEMOS.md](DEMOS.md) for the full gallery.
 
+## Installing packages from PyPI
+
+Once the interpreter runs, use `amiga.pip` (subprocess-free,
+works around the `fork()` gap):
+
+```
+execute python3:scripts/pip install six
+python3 -c "import six; print(six.__version__)"
+```
+
+Requires AmiSSL (installed above) + guest network + system
+clock within 24h of UTC.  Full guide with examples:
+[PIP.md](PIP.md).
+
 ## Updating
 
 New binary only:
