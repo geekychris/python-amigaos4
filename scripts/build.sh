@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
 # scripts/build.sh — build python-os4 (thin wrapper around ../build.sh).
 #
-# Delegates to the top-level build.sh which runs the walkero Docker
-# image, configures + makes CPython 3.12 with our _amiga native
-# module + POSIX shim layer.  Strips into build-ppc-amigaos/python-stripped.exe
-# ready for deploy.sh to push.
-#
 # Usage:
 #   scripts/build.sh           — full make (configure if needed)
 #   scripts/build.sh clean     — nuke build tree
-#   scripts/build.sh shell     — drop into an interactive Docker shell
+#   scripts/build.sh shell     — drop into shell
 #   scripts/build.sh --strip   — build + immediately strip
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
-# Which mode?  Default = make.  --strip adds a final strip pass.
 strip_after=0
 mode=make
 for arg in "$@"; do
@@ -34,18 +28,23 @@ done
 cd "$REPO"
 ./build.sh "$mode"
 
-# Only strip if user asked, and only after make/configure not shell/clean.
 if [ "$strip_after" -eq 1 ] && [ "$mode" != "clean" ] && [ "$mode" != "shell" ]; then
     echo
     echo "=== stripping build-ppc-amigaos/python.exe -> python-stripped.exe ==="
-    docker run --rm \
-        -v "$REPO:/work" \
-        -w /work/build-ppc-amigaos \
-        amiga-python-build:local \
-        bash -c 'export PATH=/opt/ppc-amigaos/bin:$PATH; \
-                 ppc-amigaos-strip -o python-stripped.exe python.exe && \
-                 ls -la python-stripped.exe'
+    if command -v docker >/dev/null 2>&1; then
+        docker run --rm \
+            -v "$REPO:/work" \
+            -w /work/build-ppc-amigaos \
+            amiga-python-build:local \
+            bash -c 'export PATH=/opt/ppc-amigaos/bin:$PATH; \
+                     ppc-amigaos-strip -o python-stripped.exe python.exe && \
+                     ls -la python-stripped.exe'
+    else
+        export PATH=/opt/ppc-amigaos/bin:$PATH
+        ppc-amigaos-strip -o "$REPO/build-ppc-amigaos/python-stripped.exe" "$REPO/build-ppc-amigaos/python.exe"
+        ls -la "$REPO/build-ppc-amigaos/python-stripped.exe"
+    fi
 fi
 
 echo
-echo "Next: scripts/deploy.sh"
+echo "Next: scripts/make_release.sh"

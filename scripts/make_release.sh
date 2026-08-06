@@ -5,6 +5,9 @@
 #   releases/python3-amigaos4-3.12.7/
 #   ├── C/
 #   │   └── python3                     (Stripped PowerPC ELF executable)
+#   ├── SDK/
+#   │   ├── include/python3.12/         (Python 3.12 C API headers + amiga_shim.h)
+#   │   └── lib/                        (libpython3.12.a, libamiga_shim.a, libamissl_lazy.a)
 #   └── System/
 #       └── python3/                    (Main Python 3 files)
 #           ├── lib/                    (Python 3.12.7 Standard Library)
@@ -17,8 +20,7 @@
 #               └── Package-Startup     (Environment variables for S:User-Startup)
 #
 # Output Archives:
-#   releases/python3-amigaos4-3.12.7.zip
-#   releases/python3-amigaos4-3.12.7.lha (if lha tool available)
+#   releases/python3-amigaos4-3.12.7.lha
 
 set -euo pipefail
 
@@ -98,13 +100,11 @@ chmod +x "$SYS_DIR/bin"/* 2>/dev/null || true
 
 cp -f "$SYS_DIR/bin/pip3" "$STAGE_DIR/C/pip3" 2>/dev/null || true
 
-# 6. Copy Amiga Bindings
-echo "-> Copying amiga_bindings to System/python3/amiga_bindings..."
+# 6. Copy Amiga Bindings, Examples, Docs, and License
+echo "-> Copying amiga_bindings, examples, and documentation..."
 mkdir -p "$SYS_DIR/amiga_bindings"
 cp -r "$REPO/amiga_bindings"/* "$SYS_DIR/amiga_bindings/"
 
-# 6. Copy Examples, Docs, and License
-echo "-> Copying examples and documentation..."
 mkdir -p "$SYS_DIR/examples"
 cp -r "$REPO/examples"/* "$SYS_DIR/examples/"
 
@@ -120,8 +120,33 @@ fi
 [ -f "$REPO/Install-Python3.info" ] && cp "$REPO/Install-Python3.info" "$STAGE_DIR/Install-Python3.info"
 [ -f "$REPO/autoinstall" ] && cp "$REPO/autoinstall" "$STAGE_DIR/autoinstall"
 
+# 7. Package SDK headers and static libraries into SDK/
+echo "-> Packaging SDK headers and static libraries into SDK/..."
+SDK_DIR="$STAGE_DIR/SDK"
+mkdir -p "$SDK_DIR/include/python3.12"
+mkdir -p "$SDK_DIR/lib"
 
-# 7. Create Startup Script Snippet
+cp -r "$REPO/Python-3.12.7/Include"/* "$SDK_DIR/include/python3.12/" 2>/dev/null || true
+BUILD_DIR="$REPO/build-ppc-amigaos"
+if [ -f "$BUILD_DIR/pyconfig.h" ]; then
+    cp "$BUILD_DIR/pyconfig.h" "$SDK_DIR/include/python3.12/"
+elif [ -f "$REPO/Python-3.12.7/pyconfig.h" ]; then
+    cp "$REPO/Python-3.12.7/pyconfig.h" "$SDK_DIR/include/python3.12/"
+fi
+cp "$REPO/amiga_shim.h" "$SDK_DIR/include/python3.12/amiga_shim.h"
+
+if [ -f "$BUILD_DIR/libpython3.12.a" ]; then
+    cp "$BUILD_DIR/libpython3.12.a" "$SDK_DIR/lib/libpython3.12.a"
+    cp "$BUILD_DIR/libpython3.12.a" "$SDK_DIR/lib/libpython.a"
+fi
+if [ -f "$BUILD_DIR/libamiga_shim.a" ]; then
+    cp "$BUILD_DIR/libamiga_shim.a" "$SDK_DIR/lib/libamiga_shim.a"
+fi
+if [ -f "$BUILD_DIR/libamissl_lazy.a" ]; then
+    cp "$BUILD_DIR/libamissl_lazy.a" "$SDK_DIR/lib/libamissl_lazy.a"
+fi
+
+# 8. Create Startup Script Snippet
 echo "-> Creating S/Package-Startup..."
 mkdir -p "$SYS_DIR/S"
 cat << 'EOF' > "$SYS_DIR/S/Package-Startup"
@@ -135,18 +160,24 @@ SetEnv PYTHONHOME SAVE python3:
 SetEnv PYTHONPATH SAVE python3:lib;python3:lib/site-packages
 EOF
 
-# 8. Create LHA archive using Docker's lha tool
+# 9. Create LHA archive
 cd "$RELEASES_DIR"
 LHA_FILE="${REL_NAME}.lha"
-echo "-> Creating LHA archive ${LHA_FILE} via Docker..."
-docker run --rm -v "$RELEASES_DIR:/work" amiga-python-build:local bash -c \
-    "cd /work && lha a ${LHA_FILE} ${REL_NAME}"
+echo "-> Creating LHA archive ${LHA_FILE}..."
+if command -v docker >/dev/null 2>&1; then
+    docker run --rm -v "$RELEASES_DIR:/work" amiga-python-build:local bash -c \
+        "cd /work && lha a ${LHA_FILE} ${REL_NAME}"
+else
+    rm -f "${LHA_FILE}"
+    lha a "${LHA_FILE}" "${REL_NAME}"
+fi
 
 echo
 echo "=== Release Build Complete ==="
 echo "Directory:   $STAGE_DIR"
 echo "Binary:      $STAGE_DIR/C/python3 ($(wc -c < "$STAGE_DIR/C/python3" | tr -d ' ') bytes)"
 echo "Lib tree:    $SYS_DIR/lib"
+echo "SDK:         $SDK_DIR"
 if [ -f "$RELEASES_DIR/${LHA_FILE}" ]; then
     echo "LHA Package: $RELEASES_DIR/${LHA_FILE} ($(wc -c < "$RELEASES_DIR/${LHA_FILE}" | tr -d ' ') bytes)"
 fi
