@@ -1,10 +1,11 @@
 /*
- * amiga_shim_fixed.c — POSIX shims for CPython on AmigaOS 4.
+ * amiga_shim.c — POSIX shims for CPython on AmigaOS 4.
  *
- * This version intentionally contains NO __gthread_* definitions.
- * GCC supplies the native AmigaOS gthread backend when the final link
- * uses -athread=native.
+ * Newlib on OS4 is missing a handful of POSIX-ish functions that
+ * CPython core files reference. We provide minimal implementations
+ * here and force-link this .o into the interpreter build.
  */
+
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -45,8 +46,6 @@ int getrlimit(int resource, struct rlimit *rlim)
 }
 #endif
 
-/* OS4 newlib routes ioctl through bsdsocket. These operations have no
- * meaningful effect on AmigaDOS file handles, so accept them. */
 int ioctl(int fd, unsigned long request, ...)
 {
     (void)fd;
@@ -143,22 +142,41 @@ __attribute__((constructor)) static void amiga_suppress_requesters(void)
     }
 }
 
+/* Known volume names newlib handles natively without path translation */
+static const char *const _newlib_native_volumes[] = {
+    "T:",       "RAM:",    "SYS:",     "PROGDIR:",
+    "CON:",     "NIL:",    "RAW:",     "PIPE:",
+    "DH0:",     "DH1:",    "DH2:",     "DH3:",
+    "DH4:",     "DH5:",    "DH6:",     "DH7:",
+    "DH8:",     "DH9:",    "DF0:",     "DF1:",
+    "CD0:",     "CD1:",    "WORK:",
+    NULL
+};
+
+static int _is_newlib_native_volume(const char *path)
+{
+    if (!path) return 0;
+    for (const char *const *v = _newlib_native_volumes; *v; v++) {
+        size_t len = 0;
+        while ((*v)[len]) len++;
+        if (strncasecmp(path, *v, len) == 0) return 1;
+    }
+    return 0;
+}
+
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
+    /* Only translate VOL:path -> /VOL/path when the volume is NOT
+     * one newlib knows natively. Native volumes must pass through
+     * untouched — otherwise newlib creates a virtual file at
+     * /VOL/path that AmigaDOS `list` never sees (silent-write bug).
+     *
+     * Non-native volumes MUST translate — otherwise newlib prepends
+     * CWD and corrupts the path to /ystem: / /ython3: (Bill's
+     * commit 130d850 bug — triggers "Please insert volume /ystem:"
+     * requester). */
     if (!path || !*path || !buf || buflen < 4) return path;
-
-    /* Handle /VOL:rest or /VOL:/rest forms */
-    if (path[0] == '/') {
-        const char *colon = strchr(path, ':');
-        if (colon) {
-            size_t prefix_len = (size_t)(colon - path);
-            const char *rest = colon + 1;
-            if (rest[0] == '/' || rest[0] == '\\') ++rest;
-            snprintf(buf, buflen, "%.*s/%s", (int)prefix_len, path, rest);
-            return buf;
-        }
-        return path;
-    }
+    if (path[0] == '/') return path;
 
     const char *colon = strchr(path, ':');
     const char *slash = strchr(path, '/');
@@ -166,32 +184,12 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 
     if (colon && colon > path && (!slash || colon < slash) &&
         (!backslash || colon < backslash)) {
+        if (_is_newlib_native_volume(path)) return path;  /* pass through */
         size_t vol_len = (size_t)(colon - path);
         const char *rest = colon + 1;
         if (rest[0] == '/' || rest[0] == '\\') ++rest;
         snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
         return buf;
-    }
-
-    /* If relative path starts with a known volume/assign name e.g. "System/...", "python3/..." */
-    if (slash && slash > path) {
-        size_t seg_len = (size_t)(slash - path);
-        if (seg_len == 6 && strncasecmp(path, "System", 6) == 0) {
-            snprintf(buf, buflen, "/%s", path);
-            return buf;
-        }
-        if (seg_len == 7 && strncasecmp(path, "python3", 7) == 0) {
-            snprintf(buf, buflen, "/%s", path);
-            return buf;
-        }
-        if (seg_len == 3 && (strncasecmp(path, "SYS", 3) == 0 || strncasecmp(path, "RAM", 3) == 0)) {
-            snprintf(buf, buflen, "/%s", path);
-            return buf;
-        }
-        if (seg_len == 4 && strncasecmp(path, "Work", 4) == 0) {
-            snprintf(buf, buflen, "/%s", path);
-            return buf;
-        }
     }
 
     return path;
@@ -215,58 +213,28 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 #undef chmod
 #undef utime
 
-/* -------------------------------------------------------------------------
- * Try-original-first strategy: pass the AmigaDOS-native VOL:path
- * form to newlib FIRST, and only fall back to Bill's /VOL/path
- * translation if that fails.
- *
- * Rationale: for the assigns newlib knows about natively (T:, RAM:,
- * SYS:, DH0-9), VOL:path just works and writes land in the
- * AmigaDOS-visible location. For custom assigns like `python3:`,
- * VOL:path fails (Bill's commit 130d850 corruption case) and we
- * fall through to /VOL/path.
- *
- * The earlier /VOL/path-first order broke user-code file writes:
- * newlib accepted /T/foo, returned a valid fd, but writes landed
- * in a virtual location AmigaDOS never saw. Trying VOL:path first
- * puts the file where the OS looks for it.
- * ---------------------------------------------------------------------- */
-
 int amiga_stat(const char *path, struct stat *buf)
 {
-    int r = stat(path, buf);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = stat(tp, buf); }
-    }
-    return r;
+    char pbuf[1024];
+    return stat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
 }
 
 int amiga_lstat(const char *path, struct stat *buf)
 {
-    int r = lstat(path, buf);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = lstat(tp, buf); }
-    }
-    return r;
+    char pbuf[1024];
+    return lstat(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), buf);
 }
 
 int amiga_access(const char *path, int mode)
 {
-    int r = access(path, mode);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = access(tp, mode); }
-    }
-    return r;
+    char pbuf[1024];
+    return access(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
 }
 
 int amiga_open(const char *path, int flags, ...)
 {
+    char pbuf[1024];
+    const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
     mode_t mode = 0;
     if (flags & O_CREAT) {
         va_list ap;
@@ -274,101 +242,55 @@ int amiga_open(const char *path, int flags, ...)
         mode = va_arg(ap, mode_t);
         va_end(ap);
     }
-    int fd = open(path, flags, mode);
-    if (fd < 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; fd = open(tp, flags, mode); }
-    }
-    return fd;
+    return open(tp, flags, mode);
 }
 
 DIR *amiga_opendir(const char *name)
 {
-    DIR *d = opendir(name);
-    if (!d) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(name, pbuf, sizeof(pbuf));
-        if (tp != name) { errno = 0; d = opendir(tp); }
-    }
-    return d;
+    char pbuf[1024];
+    return opendir(amiga_to_posix_path(name, pbuf, sizeof(pbuf)));
 }
 
 FILE *amiga_fopen(const char *filename, const char *mode)
 {
-    FILE *f = fopen(filename, mode);
-    if (!f) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(filename, pbuf, sizeof(pbuf));
-        if (tp != filename) { errno = 0; f = fopen(tp, mode); }
-    }
-    return f;
+    char pbuf[1024];
+    return fopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode);
 }
 
 FILE *amiga_freopen(const char *filename, const char *mode, FILE *stream)
 {
-    FILE *f = freopen(filename, mode, stream);
-    if (!f) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(filename, pbuf, sizeof(pbuf));
-        if (tp != filename) { errno = 0; f = freopen(tp, mode, stream); }
-    }
-    return f;
+    char pbuf[1024];
+    return freopen(amiga_to_posix_path(filename, pbuf, sizeof(pbuf)), mode, stream);
 }
 
 int amiga_chdir(const char *path)
 {
-    int r = chdir(path);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = chdir(tp); }
-    }
-    return r;
+    char pbuf[1024];
+    return chdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
 }
 
 int amiga_mkdir(const char *path, mode_t mode)
 {
-    int r = mkdir(path, mode);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = mkdir(tp, mode); }
-    }
-    return r;
+    char pbuf[1024];
+    return mkdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)), mode);
 }
 
 int amiga_rmdir(const char *path)
 {
-    int r = rmdir(path);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = rmdir(tp); }
-    }
-    return r;
+    char pbuf[1024];
+    return rmdir(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
 }
 
 int amiga_unlink(const char *path)
 {
-    int r = unlink(path);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = unlink(tp); }
-    }
-    return r;
+    char pbuf[1024];
+    return unlink(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
 }
 
 int amiga_remove(const char *path)
 {
-    int r = remove(path);
-    if (r != 0) {
-        char pbuf[1024];
-        const char *tp = amiga_to_posix_path(path, pbuf, sizeof(pbuf));
-        if (tp != path) { errno = 0; r = remove(tp); }
-    }
-    return r;
+    char pbuf[1024];
+    return remove(amiga_to_posix_path(path, pbuf, sizeof(pbuf)));
 }
 
 int amiga_rename(const char *oldpath, const char *newpath)
