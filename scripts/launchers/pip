@@ -1,0 +1,13 @@
+; Launcher: pip [install|list|uninstall] [args...]
+;
+; Usage:
+;   execute DH1:scripts/pip install requests
+;   execute DH1:scripts/pip list
+;   execute DH1:scripts/pip uninstall requests
+;
+; Delegates to `python-os4 -m amiga.pip` (see amiga/pip/__main__.py).
+; PYTHONPATH uses ';' as delim on OS4 since ':' is a volume separator.
+.KEY args/F
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH DH1:lib;DH1:pytests/amiga_bindings
+DH1:python-os4 -m amiga.pip <args>
