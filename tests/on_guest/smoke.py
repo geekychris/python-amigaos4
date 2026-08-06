@@ -175,39 +175,93 @@ _check("stat", "CORE", _stat)
 
 
 def _custom_assign_write():
-    """Verify writes to a NON-native AmigaDOS assign (System:, python3:,
-    LIBS:, ...) actually land at the OS-visible location. Catches the
-    '/ystem:' / '/ython3:' corruption reported by Bill on his install
-    running python3:bin/pip. If newlib prepends CWD without translation,
-    the volume requester ('Please insert volume /ystem:') fires."""
-    # Probe assigns most likely to exist on any OS4 install.
-    candidates = ["SYS:", "System:", "python3:", "T:"]
-    tried = []
-    last_err = None
+    """Verify writes to EVERY mounted assign work (round-trip open+
+    write+read+delete). Catches the '/ystem:' / '/ython3:' corruption
+    class reported by Bill on his install running python3:bin/pip.
+    Tests each candidate separately so a passing SYS: doesn't hide a
+    failing python3:. Skips candidates that aren't mounted."""
+    # SMOKE: is created by the smoketest.script wrapper (assign SMOKE: T:)
+    # to guarantee the non-native-assign path is tested regardless of guest
+    # setup. PYTHON:/LIBS:/CLASSES: are also non-native assigns present on
+    # a stock OS4.1 boot. SYS:/T:/DH1: are native-allowlisted and pass
+    # through untranslated; python3: covers Bill's exact bug scenario when
+    # his autoinstall drawer has mounted it.
+    candidates = ["SMOKE:", "PYTHON:", "LIBS:", "python3:",
+                  "SYS:", "System:", "T:", "DH1:"]
+    tried, failed = [], []
     for prefix in candidates:
         try:
-            os.stat(prefix)  # confirm the assign is mounted
+            os.listdir(prefix)  # confirm mounted (works for VOL:)
         except OSError:
             continue
         probe = prefix + "smoke_assign_probe.tmp"
         tried.append(prefix)
         try:
             with open(probe, "w") as f:
-                f.write("assign_probe_payload")
+                f.write("assign_probe_payload_" + prefix)
             with open(probe, "r") as f:
                 got = f.read()
-            if got != "assign_probe_payload":
-                raise RuntimeError(f"read-back mismatch under {prefix}: {got!r}")
-            try: os.remove(probe)
-            except OSError: pass
-            return f"write+read+delete ok under {prefix}"
+            if got != "assign_probe_payload_" + prefix:
+                failed.append(f"{prefix}: readback mismatch ({got!r})")
+                continue
+            # Verify the file was visible AT the AmigaDOS-visible path
+            # (not just the newlib-virtual one). This is the check that
+            # exposes silent-write regressions.
+            listing = os.listdir(prefix)
+            if "smoke_assign_probe.tmp" not in listing:
+                failed.append(f"{prefix}: file not visible via os.listdir")
         except BaseException as e:
-            last_err = f"under {prefix}: {type(e).__name__}: {e}"
+            failed.append(f"{prefix}: {type(e).__name__}: {e}")
+        finally:
             try: os.remove(probe)
             except OSError: pass
-            continue
-    raise RuntimeError(f"tried {tried}, last error: {last_err}")
+    if not tried:
+        raise RuntimeError("no candidate assigns were mounted; test inconclusive")
+    if failed:
+        raise RuntimeError(f"tried {tried}; failures: {failed}")
+    return f"write+read+delete ok under {tried}"
 _check("custom_assign_write", "CORE", _custom_assign_write)
+
+
+def _import_via_custom_assign():
+    """Exercise the READ path through a custom assign — the specific
+    scenario Bill hit in python3:bin/pip. The launcher does:
+        sys.path.extend(['python3:lib/site-packages', ...])
+        from pip._internal.cli.main import main
+    Python's importlib calls fopen('python3:lib/pkg/__init__.py'),
+    which corrupts to '/ython3:' if the shim mistranslates. This
+    probe forces a stdlib import specifically via a non-native assign."""
+    # Prefer python3: (that's the exact assign in Bill's failure);
+    # fall back to SYS: if python3: isn't mounted.
+    assign_lib = None
+    for prefix in ("python3:lib", "SYS:System/python3/lib"):
+        try:
+            os.stat(prefix)
+            assign_lib = prefix
+            break
+        except OSError:
+            continue
+    if assign_lib is None:
+        return "SKIP: no python3: assign mounted"
+    # Pick a stdlib module that's almost certainly not already imported
+    # so importlib actually opens files.
+    candidate = None
+    for name in ("cmd", "shelve", "sched", "quopri"):
+        if name not in sys.modules:
+            candidate = name
+            break
+    if candidate is None:
+        return "SKIP: all candidate modules already imported"
+    saved = sys.path[:]
+    try:
+        # Prepend the assign path so importlib hits it first
+        sys.path.insert(0, assign_lib)
+        mod = __import__(candidate)
+        loc = getattr(mod, "__file__", "?")
+        return f"imported {candidate} from {loc}"
+    finally:
+        sys.path[:] = saved
+_check("import_via_custom_assign", "CORE", _import_via_custom_assign)
 
 
 # ─── TIER 2: EMBED-CRITICAL (matters for GemRB / any libpython.a host) ─

@@ -95,9 +95,23 @@ Expected end of smoke.log:
 
 ```
 === SUMMARY ===
-  CORE        : 10/10 pass  [OK]
+  CORE        : 12/12 pass  [OK]
   EMBED       : 5/5 pass    [OK]
   INTEGRATION : 6/6 pass    [OK]
+```
+
+The `smoketest.script` should include `assign SMOKE: T:` before invoking
+`python-os4` — the `custom_assign_write` probe uses it to guarantee a
+non-native assign is always in the tested set, even on guests where
+`python3:` isn't mounted. Full wrapper:
+
+```
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH "DH1:lib"
+assign SMOKE: T:
+DH1:python-os4 DH1:smoke.py >T:sm.out 2>T:sm.err
+assign SMOKE: REMOVE
+echo done_smoke >T:sm.done
 ```
 
 Smoke test exit codes (from stdout `sm.out`):
