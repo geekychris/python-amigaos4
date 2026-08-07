@@ -116,6 +116,13 @@ if [ -d "$REPO/docs" ]; then
     cp -r "$REPO/docs"/* "$SYS_DIR/docs/"
 fi
 
+if [ -f "$REPO/tests/on_guest/smoke.py" ]; then
+    echo "-> Packaging on-guest smoke test into System/python3/smoke.py..."
+    cp "$REPO/tests/on_guest/smoke.py" "$SYS_DIR/smoke.py"
+    mkdir -p "$SYS_DIR/tests/on_guest"
+    cp -r "$REPO/tests"/* "$SYS_DIR/tests/" 2>/dev/null || true
+fi
+
 [ -f "$REPO/README.md" ] && cp "$REPO/README.md" "$STAGE_DIR/README.md" && cp "$REPO/README.md" "$SYS_DIR/README.md" && cp "$REPO/README.md" "$STAGE_DIR/readme.txt"
 [ -f "$REPO/README.md.info" ] && cp "$REPO/README.md.info" "$STAGE_DIR/README.md.info"
 [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$SYS_DIR/LICENSE"
