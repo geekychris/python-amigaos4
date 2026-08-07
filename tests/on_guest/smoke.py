@@ -34,19 +34,25 @@ import traceback
 
 LOG = "T:smoke.log"
 OOB = "T:smoke_oob.log"           # scratch for AmigaDOS shellouts
-_results: list[tuple[str, bool, str, str]] = []   # (name, ok, tier, detail)
+_current_test: str | None = None
 
 
 # ─── helpers ──────────────────────────────────────────────────────────
 
 def _log_raw(text: str) -> None:
-    """Append raw text to the smoke log. Uses "a" mode so each write
-    is fully persisted on close (buffers already flushed by CPython on
-    close). Avoid fsync — on OS4 RAM Disk it's very slow."""
-    with open(LOG, "a") as f:
-        f.write(text)
-        if not text.endswith("\n"):
+    """Append text to the smoke log. Uses "a" mode with surrogateescape so
+    non-UTF-8 environment bytes never raise UnicodeEncodeError. Every line
+    is tagged with the current test name [tier:name] or [HEADER]."""
+    tag = f"[{_current_test}]" if _current_test else "[HEADER]"
+    lines = text.splitlines()
+    with open(LOG, "a", encoding="utf-8", errors="surrogateescape") as f:
+        if not lines and text.endswith("\n"):
             f.write("\n")
+        for line in lines:
+            if line.strip():
+                f.write(f"{tag} {line}\n")
+            else:
+                f.write("\n")
 
 
 def _dos(cmd: str) -> tuple[int, str]:
@@ -61,7 +67,7 @@ def _dos(cmd: str) -> tuple[int, str]:
     except OSError: pass
     rc = os.system(f"{cmd} >{OOB}")
     try:
-        with open(OOB, "r") as f:
+        with open(OOB, "r", encoding="utf-8", errors="surrogateescape") as f:
             out = f.read()
     except OSError:
         out = ""
@@ -135,34 +141,36 @@ def _record(name, ok, tier, detail=""):
 def _check(name, tier, fn):
     """Run a probe; on failure attach errno, amiga_list of any path
     the failure references, and a traceback."""
+    global _current_test
+    _current_test = f"{tier}:{name}"
+    _log_raw(f"RUNNING: [{tier}] {name}")
     try:
-        detail = fn() or ""
-    except BaseException as e:
-        tb = traceback.format_exc()
-        extra = _errno_of(e)
-        # If the exception message contains a path we can lookup, do
-        # an oob amiga check to enrich the failure log.
-        oob = ""
-        msg = str(e)
-        # crude but useful — heuristic to find something ':'-terminated
-        for token in msg.split():
-            if ":" in token and len(token) < 128:
-                # strip common wrapping chars
-                token = token.strip("'\"()[]{},")
-                _, listed = _amiga_list(token)
-                if listed:
-                    oob = f"\n  amiga list {token} → {listed.strip()[:200]}"
-                    break
-        _record(name, False, tier,
-                f"{type(e).__name__}: {e}{extra}{oob}\n{tb}")
-        return
-    _record(name, True, tier, detail if isinstance(detail, str) else "")
+        try:
+            detail = fn() or ""
+        except BaseException as e:
+            tb = traceback.format_exc()
+            extra = _errno_of(e)
+            oob = ""
+            msg = str(e)
+            for token in msg.split():
+                if ":" in token and len(token) < 128:
+                    token = token.strip("'\"()[]{},")
+                    _, listed = _amiga_list(token)
+                    if listed:
+                        oob = f"\n  amiga list {token} → {listed.strip()[:200]}"
+                        break
+            _record(name, False, tier,
+                    f"{type(e).__name__}: {e}{extra}{oob}\n{tb}")
+            return
+        _record(name, True, tier, detail if isinstance(detail, str) else "")
+    finally:
+        _current_test = None
 
 
 # ─── HEADER: environment dump (always runs, always logged) ────────────
 
-with open(LOG, "w") as f:
-    f.write(f"=== smoke test @ {sys.version.split()[0]} ===\n\n")
+with open(LOG, "w", encoding="utf-8", errors="surrogateescape") as f:
+    f.write(f"[HEADER] === smoke test @ {sys.version.split()[0]} ===\n\n")
 
 _log_raw("─── ENVIRONMENT ───────────────────────────────────────────────")
 _log_raw(f"python.version    : {sys.version}")
