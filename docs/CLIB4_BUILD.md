@@ -285,6 +285,12 @@ what patterns to look for.
 
 ### Current build state (2026-08-07)
 
+**Toolchain**: extended walkero image, upgraded from clib4 v2.1 (shipped
+with `walkero/amigagccondocker:os4-gcc11`) to **clib4 v2.3** — the
+Dockerfile pulls Andrea Palmatè's official .deb release and drops the
+new SDK bits into the walkero SDK tree. Guest-side `clib4.library` v2.3
+is downloaded from the matching LHA release by `extract-clib4.sh`.
+
 **Both variants build cleanly:**
 
 ```
@@ -293,18 +299,32 @@ build-ppc-amigaos-750-clib4/python.exe    49 MB   (clib4, no stdlib ssl)
 clib4-runtime/                            10 files (30 MB, mostly libstdc++.so)
 ```
 
-**Both variants are functionally equivalent for our stack.** The clib4
-build drops stdlib `_ssl` and `_hashopenssl` (because AmiSSL doesn't
-have a clib4 auto-init yet), but:
+**Both variants are functionally equivalent for our stack, and both
+have HTTPS available via different paths:**
 
-- `amiga.https` shells out to the standalone `openssl` binary at
-  `DH1:openssl` — it never uses stdlib `_ssl`. Works identically on
-  both variants.
-- `amiga.pip` and `amiga.s3` build on `amiga.https`. Both work fully
-  on clib4.
+- **newlib variant**: `import ssl` uses the real compiled `_ssl` module
+  linked against AmiSSL (lazy-init via amissl_lazy.c).
+- **clib4 variant**: `import ssl` uses `amiga.compat.ssl_shim` (shipped
+  as `DH1:lib/ssl.py`), which monkey-patches `http.client.HTTPSConnection`
+  to route through amiga.https (openssl binary shell-out). So
+  `urllib.request.urlopen("https://…")` and `http.client.HTTPSConnection`
+  transparently work on both variants.
+- Direct `amiga.https.fetch()` calls work identically on both.
+- `amiga.pip` and `amiga.s3` build on `amiga.https` — full feature
+  parity on both variants.
 - `hashlib.md5/sha1/sha256/sha512` etc. work via our HACL-based
   built-in modules (`_md5`, `_sha1`, `_sha2` from `setup.local`),
-  no OpenSSL needed.
+  no OpenSSL needed on either variant.
+
+**What still doesn't work on clib4 that DOES work on newlib:**
+
+- Raw-socket TLS upgrade patterns: `SSLContext.wrap_socket(sock)`.
+  Impacts third-party libraries built on urllib3 / requests / httpx
+  (they upgrade a live socket) and stdlib `imaplib.IMAP4_SSL` /
+  `smtplib.SMTP_SSL`. Not fixable without a real ssl library binding
+  or upstream AmiSSL clib4 support (`libamisslauto.a` missing).
+- `hashlib.new('blake2b'/'sha3_256')` and `hashlib.pbkdf2_hmac` —
+  need the OpenSSL-backed `_hashopenssl` module.
 
 **What clib4 loses:**
 
