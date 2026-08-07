@@ -80,6 +80,24 @@ int   pclose(FILE *stream);
 #define SA_ONSTACK 0
 #endif
 
+/* Undo any macro definitions of these POSIX names — clib4's time.h
+ * defines `tzname` as a macro (something like `__tzname` for its
+ * internal storage), which collides with struct field names used in
+ * CPython's Modules/_zoneinfo.c (`state->NO_TTINFO.tzname = ...`).
+ * POSIX only requires `tzname` to be an lvalue accessible after
+ * <time.h>, not that it be a macro — so undef'ing it here is safe
+ * and CPython's own declaration is picked up correctly. */
+#include <time.h>
+#ifdef tzname
+#undef tzname
+#endif
+#ifdef timezone
+#undef timezone
+#endif
+#ifdef daylight
+#undef daylight
+#endif
+
 /* getrandom(2) — Linux/glibc syscall Python's bootstrap_hash uses.
  * Neither newlib nor OS4 ship an equivalent, and there's no /dev/urandom.
  * Our shim in amiga_shim.c fills the buffer with weak time-based entropy
