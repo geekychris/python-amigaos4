@@ -129,6 +129,19 @@ run_build_steps() {
         cp -f "$WORK_DIR/setup.local" Modules/Setup.local
         cp -f "$WORK_DIR/_amigamodule.c" "$WORK_DIR/$SRC/Modules/"
 
+        # Clib4-only source patches:
+        # _zoneinfo.c uses `tzname` as a struct field name, but clib4's
+        # time.h defines tzname as a function-call macro. Locally undef
+        # tzname/timezone/daylight at the top of _zoneinfo.c so the
+        # struct field access parses. timemodule.c still gets the macro
+        # form (it needs the lvalue via `_Py_tzname[0]`).
+        if [ "$MCRT" = "clib4" ]; then
+            ZINFO="$WORK_DIR/$SRC/Modules/_zoneinfo.c"
+            if [ -f "$ZINFO" ] && ! head -3 "$ZINFO" | grep -q "AMIGA_SHIM_TZNAME_UNDEF"; then
+                sed -i '1i /* AMIGA_SHIM_TZNAME_UNDEF for clib4 */\n#undef tzname\n#undef timezone\n#undef daylight' "$ZINFO"
+            fi
+        fi
+
         SHIM_SRC="$WORK_DIR/amiga_shim.c"
         if [ ! -f "$SHIM_SRC" ] && [ -f "$WORK_DIR/amiga_shim_fixed.c" ]; then
             SHIM_SRC="$WORK_DIR/amiga_shim_fixed.c"

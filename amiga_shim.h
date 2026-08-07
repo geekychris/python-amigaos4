@@ -80,22 +80,25 @@ int   pclose(FILE *stream);
 #define SA_ONSTACK 0
 #endif
 
-/* Undo any macro definitions of these POSIX names — clib4's time.h
- * defines `tzname` as a macro (something like `__tzname` for its
- * internal storage), which collides with struct field names used in
- * CPython's Modules/_zoneinfo.c (`state->NO_TTINFO.tzname = ...`).
- * POSIX only requires `tzname` to be an lvalue accessible after
- * <time.h>, not that it be a macro — so undef'ing it here is safe
- * and CPython's own declaration is picked up correctly. */
+/* clib4 defines `tzname` as a function-call macro (`_tzname` →
+ * `__get_tzname()`) but does NOT define POSIX `timezone` or `daylight`
+ * as visible identifiers — only `_timezone` and `_daylight`. Provide
+ * the aliases here so CPython's timemodule.c (which does
+ *    #define _Py_timezone timezone
+ * unconditionally) compiles. Newlib defines them natively.
+ *
+ * tzname is intentionally NOT touched here: timemodule.c uses it as
+ * an lvalue (needs the macro form), while _zoneinfo.c uses it as a
+ * struct field name (needs it NOT expanded). build-750.sh patches
+ * Modules/_zoneinfo.c specifically to undef tzname locally. */
 #include <time.h>
-#ifdef tzname
-#undef tzname
+#ifdef __CLIB4__
+#ifndef timezone
+#define timezone (__get_timezone())
 #endif
-#ifdef timezone
-#undef timezone
+#ifndef daylight
+#define daylight (__get_daylight())
 #endif
-#ifdef daylight
-#undef daylight
 #endif
 
 /* getrandom(2) — Linux/glibc syscall Python's bootstrap_hash uses.
