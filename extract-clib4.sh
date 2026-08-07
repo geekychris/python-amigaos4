@@ -26,7 +26,14 @@
 set -euo pipefail
 
 OUT="${1:-clib4-runtime}"
-IMAGE="walkero/amigagccondocker:os4-gcc11"
+# Use our project's derived image (which layered clib4 v2.3 SDK on top
+# of walkero's v2.1). Fall back to the raw walkero image if the local
+# image isn't built yet — but ONLY produces v2.1 bits in that case.
+IMAGE="${IMAGE:-amiga-python-build:local}"
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "warning: $IMAGE not found — falling back to walkero base (will give v2.1 .so's)" >&2
+    IMAGE="walkero/amigagccondocker:os4-gcc11"
+fi
 
 mkdir -p "$OUT"
 
