@@ -141,7 +141,15 @@ def _record(name, ok, tier, detail=""):
 
 def _check(name, tier, fn):
     """Run a probe; on failure attach errno, amiga_list of any path
-    the failure references, and a traceback."""
+    the failure references, and a traceback. If command line arguments
+    are provided (e.g. python3 smoke.py assign_visibility_matrix or
+    python3 smoke.py PATH_DIAG), only matching tests run."""
+    filters = [a.lower() for a in sys.argv[1:] if not a.startswith("-")]
+    if filters:
+        match = any(f in name.lower() or f in tier.lower() for f in filters)
+        if not match:
+            return
+
     global _current_test
     _current_test = f"{tier}:{name}"
     _log_raw(f"RUNNING: [{tier}] {name}")
