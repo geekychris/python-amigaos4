@@ -288,15 +288,35 @@ what patterns to look for.
 **Both variants build cleanly:**
 
 ```
-build-ppc-amigaos-750/python.exe          56 MB   (newlib, with SSL)
-build-ppc-amigaos-750-clib4/python.exe    49 MB   (clib4, no SSL)
+build-ppc-amigaos-750/python.exe          56 MB   (newlib, with stdlib ssl)
+build-ppc-amigaos-750-clib4/python.exe    49 MB   (clib4, no stdlib ssl)
 clib4-runtime/                            10 files (30 MB, mostly libstdc++.so)
 ```
 
-The clib4 build lands a working interpreter — it's just missing the
-`ssl` and `hashlib` stdlib modules (Python throws `ModuleNotFoundError`
-if code imports them). Everything else — sockets, sqlite3, threading,
-gc, unicode, path handling, amiga.pip's non-HTTPS path — is intact.
+**Both variants are functionally equivalent for our stack.** The clib4
+build drops stdlib `_ssl` and `_hashopenssl` (because AmiSSL doesn't
+have a clib4 auto-init yet), but:
+
+- `amiga.https` shells out to the standalone `openssl` binary at
+  `DH1:openssl` — it never uses stdlib `_ssl`. Works identically on
+  both variants.
+- `amiga.pip` and `amiga.s3` build on `amiga.https`. Both work fully
+  on clib4.
+- `hashlib.md5/sha1/sha256/sha512` etc. work via our HACL-based
+  built-in modules (`_md5`, `_sha1`, `_sha2` from `setup.local`),
+  no OpenSSL needed.
+
+**What clib4 loses:**
+
+- `import ssl` (stdlib) — no TLS via stdlib. Third-party libraries
+  that do `import ssl` directly (requests, urllib3, aiohttp, etc.)
+  will fail. `urllib.request` for HTTPS URLs will also fail.
+- OpenSSL-backed hashlib extras: `hashlib.new('blake2b')`,
+  `hashlib.new('sha3_256')`, `hashlib.pbkdf2_hmac()`. Standard
+  digest names (`md5`, `sha1`, `sha256`, etc.) keep working via
+  our built-ins.
+
+If any of that matters for your workflow, use the newlib variant.
 
 ### Upstream blockers not yet fixed
 
