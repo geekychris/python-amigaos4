@@ -283,6 +283,32 @@ what patterns to look for.
   two definitions are semantically identical (`__bswap_64(x)`), so
   harmless.
 
+### Upstream blockers not yet fixed
+
+- **`libamisslauto.a` missing for clib4**. AmiSSL ships an auto-init
+  helper only for newlib and clib2 (see
+  `/opt/ppc-amigaos/ppc-amigaos/SDK/local/{newlib,clib2}/lib/libamisslauto.a`).
+  There is no `clib4/lib/libamisslauto.a`. The link step fails with
+  `ld: cannot find -lamisslauto`.
+
+  This is genuinely upstream — AmiSSL needs to port its auto-init to
+  clib4. Workarounds:
+  - Skip `_ssl` and `_hashopenssl` from Modules/Setup.local for clib4
+    builds (loses HTTPS from the clib4 variant — but everything else
+    including sockets works).
+  - Wait for AmiSSL to ship libamisslauto for clib4.
+  - Handroll an amissl_lazy.c equivalent for clib4 that works around
+    the openssl3-header parse cascade (see below).
+
+- **amissl_lazy.c can't compile under clib4**. Its use of
+  `<proto/amissl.h>` pulls in openssl3 headers whose ASN.1 macros
+  (`DECLARE_ASN1_DUP_FUNCTION`) triggers a GCC "old-style parameter
+  declaration" parse cascade. Not clear whether the fix is in clib4's
+  openssl3 headers or in the ASN.1 macro definitions. For now the
+  build system substitutes a dummy `libamissl_lazy.a` for clib4 and
+  routes SSL through `-lamisslauto` — which fails at link because of
+  the point above. Currently blocked here.
+
 ### Runtime issues (once the build succeeds)
 
 1. **Missing `clib4.library`** — binary won't start. Copy the file

@@ -122,7 +122,8 @@ run_build_steps() {
             ac_cv_func_sigfillset=no \
             ac_cv_func_sigwait=no \
             ac_cv_func_sigwaitinfo=no \
-            ac_cv_func_sigtimedwait=no
+            ac_cv_func_sigtimedwait=no \
+            ac_cv_func_timegm=no
     fi
 
     if [ "$STAGE" = "make" ]; then
@@ -152,10 +153,26 @@ run_build_steps() {
         ppc-amigaos-ranlib libamiga_shim.a
         export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
 
-        ppc-amigaos-gcc $CFLAGS_BASE -c "$WORK_DIR/amissl_lazy.c" -o amissl_lazy.o
-        ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
-        ppc-amigaos-ranlib libamissl_lazy.a
-        export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
+        # amissl_lazy.c only builds under newlib — clib4's include chain
+        # pulls in openssl3 headers whose ASN.1 macros trigger a parse
+        # cascade error under this GCC/clib4 combo. For clib4, fall
+        # back to eager AmiSSL load via -lamisslauto (means python-os4
+        # won't start without AmiSSL installed; acceptable trade-off
+        # for the initial clib4 port).
+        if [ "$MCRT" = "newlib" ]; then
+            ppc-amigaos-gcc $CFLAGS_BASE -c "$WORK_DIR/amissl_lazy.c" -o amissl_lazy.o
+            ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
+            ppc-amigaos-ranlib libamissl_lazy.a
+            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
+        else
+            # Create an empty libamissl_lazy.a so LDFLAGS references
+            # don't fail. Runtime AmiSSL is provided by -lamisslauto.
+            echo 'void _amissl_lazy_placeholder(void) {}' > /tmp/amissl_lazy_stub.c
+            ppc-amigaos-gcc $CFLAGS_BASE -c /tmp/amissl_lazy_stub.c -o amissl_lazy.o
+            ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
+            ppc-amigaos-ranlib libamissl_lazy.a
+            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive -lamisslauto"
+        fi
 
         export CFLAGS="$CFLAGS_BASE -include $WORK_DIR/amiga_shim.h"
 
