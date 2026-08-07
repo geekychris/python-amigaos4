@@ -172,70 +172,33 @@ static int _is_newlib_native_volume(const char *path)
     return 0;
 }
 
-static int _is_amiga_volume_name(const char *name, size_t len)
-{
-    if (!name || len == 0 || len > 100) return 0;
-    char vbuf[128];
-    snprintf(vbuf, sizeof(vbuf), "%.*s:", (int)len, name);
-    if (IDOS) {
-        BPTR lock = Lock((STRPTR)vbuf, SHARED_LOCK);
-        if (lock) {
-            UnLock(lock);
-            return 1;
-        }
-    }
-    return 0;
-}
-
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
+    /* Only translate VOL:path → /VOL/path when the volume is NOT
+     * one newlib knows natively. Native volumes must pass through
+     * untouched — otherwise newlib creates a virtual file at
+     * /VOL/path that AmigaDOS `list` never sees (silent-write bug).
+     *
+     * Non-native volumes MUST translate — otherwise newlib prepends
+     * CWD and corrupts the path to /ystem: / /ython3: (Bill's
+     * commit 130d850 bug — triggers "Please insert volume /ystem:"
+     * requester). */
     if (!path || !*path || !buf || buflen < 4) return path;
+    if (path[0] == '/') return path;
 
-    /* Strip leading slash from volume paths to produce native VOL:rest format.
-     * On AmigaOS, /Boot: or /Workbench: or /python3/ causes newlib to strip
-     * the leading letter looking for /oot: or /orkbench: popping up a requester.
-     * Converting to native VOL:rest format eliminates the error. */
+    const char *colon = strchr(path, ':');
+    const char *slash = strchr(path, '/');
+    const char *backslash = strchr(path, '\\');
 
-    const char *p = path;
-    if (p[0] == '/') p++;
-
-    const char *colon = strchr(p, ':');
-    const char *slash = strchr(p, '/');
-
-    /* Case A: /VOL:rest or /VOL/rest -> VOL:rest (generic for ANY volume name) */
-    if (path[0] == '/') {
-        if (colon && (!slash || colon < slash)) {
-            size_t vol_len = (size_t)(colon - p);
-            const char *rest = colon + 1;
-            if (rest[0] == '/' || rest[0] == '\\') rest++;
-            int n = snprintf(buf, buflen, "%.*s:%s", (int)vol_len, p, rest);
-            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
-            return buf;
-        } else if (slash) {
-            size_t vol_len = (size_t)(slash - p);
-            const char *rest = slash + 1;
-            int n = snprintf(buf, buflen, "%.*s:%s", (int)vol_len, p, rest);
-            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
-            return buf;
-        }
+    if (colon && colon > path && (!slash || colon < slash) &&
+        (!backslash || colon < backslash)) {
+        if (_is_newlib_native_volume(path)) return path;  /* pass through */
+        size_t vol_len = (size_t)(colon - path);
+        const char *rest = colon + 1;
+        if (rest[0] == '/' || rest[0] == '\\') ++rest;
+        snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
+        return buf;
     }
-
-    /* Case B: VOL:rest -> return path as-is (already valid native Amiga volume format) */
-    if (colon && (!slash || colon < slash)) {
-        return path;
-    }
-
-    /* Case C: VOL/rest (un-slashed, no colon) -> check dynamically via IDOS Lock if VOL: exists */
-    if (slash && slash > path) {
-        size_t seg_len = (size_t)(slash - path);
-        if (_is_amiga_volume_name(path, seg_len)) {
-            const char *rest = slash + 1;
-            int n = snprintf(buf, buflen, "%.*s:%s", (int)seg_len, path, rest);
-            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
-            return buf;
-        }
-    }
-
     return path;
 }
 
