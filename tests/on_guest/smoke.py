@@ -492,7 +492,7 @@ _check("socket_import", "INTEGRATION", _socket_import)
 # Bill's autoinstall assign; others are stock OS4.1.
 _CANDIDATES = ["T:", "RAM:", "SYS:",                    # native volumes
                "SYS:", "PROGDIR:",                       # native-ish
-               "LIBS:", "S:", "C:", "DEVS:", "SYSTEM:",  # well-known assigns
+               "LIBS:", "S:", "C:", "DEVS:", "SYS:",     # well-known assigns
                "SMOKE:", "PYTHON:", "python3:"]          # custom / boot-time
 
 
