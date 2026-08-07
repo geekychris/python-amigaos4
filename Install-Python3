@@ -88,8 +88,8 @@ def post_install():
 
     # 2. Set script protection bit (+s) on bin helper tools
     try:
-        os.system("Protect SYS:System/python3/bin/pip3 +s +e >NIL:")
-        os.system("Protect SYS:System/python3/bin/pip +s +e >NIL:")
+        os.system("Protect SYS:System/python3/bin/pip3 +se >NIL:")
+        os.system("Protect SYS:System/python3/bin/pip +se >NIL:")
     except:
         pass
 
