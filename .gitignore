@@ -1,20 +1,18 @@
+
+__pycache__/
 # Build artifacts
-build-ppc-amigaos/
-
-# Source tarball (fetched by curl, ~20MB — not worth versioning)
-Python-3.12.7.tar.xz
-
-# Extracted source tree — huge and largely unmodified. Only our
-# configure patches matter; capture those as configure.amigaos.patch
-# for review, not the whole tree.
-Python-3.12.7/
-
-# Runtime library extracted from the walkero SDK image. Not our
 # code to redistribute — use extract-newlib.sh to fetch a fresh
+# configure patches matter; capture those as configure.amigaos.patch
 # copy from the Docker image. See README for OS4-side install.
-newlib.library
-python312.zip
-
+# Extracted source tree — huge and largely unmodified. Only our
+# for review, not the whole tree.
 # Releases and temp build scripts
-releases/
+# Runtime library extracted from the walkero SDK image. Not our
+# Source tarball (fetched by curl, ~20MB — not worth versioning)
 apply_patches.sh
+build-ppc-amigaos/
+newlib.library
+Python-3.12.7.tar.xz
+Python-3.12.7/
+python312.zip
+releases/
