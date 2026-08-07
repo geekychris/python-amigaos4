@@ -283,6 +283,21 @@ what patterns to look for.
   two definitions are semantically identical (`__bswap_64(x)`), so
   harmless.
 
+### Current build state (2026-08-07)
+
+**Both variants build cleanly:**
+
+```
+build-ppc-amigaos-750/python.exe          56 MB   (newlib, with SSL)
+build-ppc-amigaos-750-clib4/python.exe    49 MB   (clib4, no SSL)
+clib4-runtime/                            10 files (30 MB, mostly libstdc++.so)
+```
+
+The clib4 build lands a working interpreter — it's just missing the
+`ssl` and `hashlib` stdlib modules (Python throws `ModuleNotFoundError`
+if code imports them). Everything else — sockets, sqlite3, threading,
+gc, unicode, path handling, amiga.pip's non-HTTPS path — is intact.
+
 ### Upstream blockers not yet fixed
 
 - **`libamisslauto.a` missing for clib4**. AmiSSL ships an auto-init
