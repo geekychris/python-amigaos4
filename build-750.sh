@@ -70,6 +70,16 @@ run_build_steps() {
     # PowerPC 750 is a suitable common G3/G4-era AmigaOS 4 baseline.
     # GCC supplies its native AmigaOS gthread implementation through -athread=native at link time.
     export CFLAGS_BASE="-mcrt=$MCRT -mhard-float -O2 -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+
+    # Clib4-specific compile flags. AmiSSL declares OPENSSL_THREADS in
+    # opensslconf/configuration.h but clib4's include chain for openssl
+    # doesn't always pull in that header — define it in CFLAGS so the
+    # thread-safety guard in _ssl.c is satisfied. (AmiSSL IS thread-
+    # safe, so the assertion the guard makes about OpenSSL is correct.)
+    if [ "$MCRT" = "clib4" ]; then
+        CFLAGS_BASE="$CFLAGS_BASE -DOPENSSL_THREADS=1"
+    fi
+
     export CFLAGS="$CFLAGS_BASE"
     export LDFLAGS="-mcrt=$MCRT -mcpu=750 -mno-altivec -mno-powerpc64 -athread=native -lauto"
 
@@ -107,7 +117,12 @@ run_build_steps() {
             ac_cv_have_working_getpwuid_r=no \
             ac_cv_func_getrandom=yes \
             ac_cv_member_struct_tm_tm_zone=no \
-            ac_cv_member_struct_tm_tm_gmtoff=no
+            ac_cv_member_struct_tm_tm_gmtoff=no \
+            ac_cv_func_pthread_sigmask=no \
+            ac_cv_func_sigfillset=no \
+            ac_cv_func_sigwait=no \
+            ac_cv_func_sigwaitinfo=no \
+            ac_cv_func_sigtimedwait=no
     fi
 
     if [ "$STAGE" = "make" ]; then

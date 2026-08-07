@@ -245,18 +245,57 @@ Diffs to watch for between the two logs:
 
 ## When something breaks
 
-The clib4 build is new. Expected first-time issues:
+The clib4 build is new. Below are issues discovered on the first pass;
+all are already fixed in-tree, listed here so a future maintainer knows
+what patterns to look for.
 
-1. **Undefined symbols at link time** — clib4 may not have a POSIX
-   function CPython uses that newlib provides (or a differently-named
-   equivalent). Fix: extend `amiga_shim.c` with a stub, guarded by
-   `#ifdef __CLIB4__`.
-2. **Compile-time header conflict** — some CPython source may
-   `#include <linux/…>` or similar that clib4 handles differently
-   than newlib. Fix: patch in `Python-3.12.7/…` or in the shim.
-3. **Runtime crash on startup** — most likely `clib4.library` version
-   mismatch or missing `.so` in `PROGDIR:`. Check `T:sm.err` and the
-   Guru info in `amiga_last_crash` if amiga_mcp is running.
+### Compile-time issues already fixed
+
+1. **`SA_ONSTACK undeclared`** in `Python/pylifecycle.c` — clib4's
+   `signal.h` doesn't declare it (no sigaltstack support). Fixed by
+   `#define SA_ONSTACK 0` in `amiga_shim.h` when not already defined.
+2. **`struct tm` has no `tm_zone` / `tm_gmtoff`** in
+   `Modules/_datetimemodule.c` — clib4 spells them `__tm_zone` /
+   `__tm_gmtoff` (BSD-hidden). Fixed by setting
+   `ac_cv_member_struct_tm_tm_{zone,gmtoff}=no` in the configure line
+   so CPython compiles the fallback branch using the `timezone` global.
+3. **`expected identifier before '(' token` on `state->NO_TTINFO.tzname`
+   in `Modules/_zoneinfo.c`** — clib4's `time.h` defines `tzname` as a
+   macro. `#undef tzname` (and `timezone`, `daylight`) in
+   `amiga_shim.h` restores use of the identifier as a field name.
+4. **`OPENSSL_THREADS is not defined`** in `Modules/_ssl.c` — clib4's
+   openssl include chain doesn't always pull in the `configuration.h`
+   header where AmiSSL declares OPENSSL_THREADS. Fixed by adding
+   `-DOPENSSL_THREADS=1` to `CFLAGS_BASE` when `MCRT=clib4` (AmiSSL
+   is thread-safe, so the assertion is truthful).
+
+### Warning noise you can safely ignore
+
+- `warning: "_POSIX_THREADS" redefined` — clib4 defines it as an empty
+  macro (POSIX signal); pyconfig defines it to `1`. Semantically
+  identical, harmless.
+- `warning: "__BSD_VISIBLE" redefined` — clib4's `features.h` defines
+  it as `0`; pyconfig defines it to `1`. Determines whether some
+  BSD-only prototypes are visible; the pyconfig value wins for
+  CPython's needs.
+- `warning: "le64toh" / "htole64" redefined` — endian macros collide
+  between clib4's `endian.h` and CPython's HACL crypto headers. The
+  two definitions are semantically identical (`__bswap_64(x)`), so
+  harmless.
+
+### Runtime issues (once the build succeeds)
+
+1. **Missing `clib4.library`** — binary won't start. Copy the file
+   from `extract-clib4.sh` output into `LIBS:`.
+2. **Missing `libc.so` etc alongside the binary** — same. The install
+   script places them in `DH1:python-os4-clib4/`.
+3. **`clib4.library version mismatch`** — the library in `LIBS:` must
+   be at least as new as what the binary was linked against.
+   `extract-clib4.sh` always pulls the same version the docker image
+   linked with, so extracting and re-deploying together should never
+   trip this.
+4. **Runtime crash on startup** — capture `amiga_last_crash` via
+   amiga_mcp or read the `GrimReaper` info from the crash dialog.
 
 Ship us the failure via `T:smoke.log` (see the smoke's own trailer for
 what to include) and the crash log if any.
