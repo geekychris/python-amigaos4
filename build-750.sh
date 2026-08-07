@@ -105,7 +105,9 @@ run_build_steps() {
             ac_cv_func_execv=no \
             ac_cv_have_working_getgrgid_r=no \
             ac_cv_have_working_getpwuid_r=no \
-            ac_cv_func_getrandom=yes
+            ac_cv_func_getrandom=yes \
+            ac_cv_member_struct_tm_tm_zone=no \
+            ac_cv_member_struct_tm_tm_gmtoff=no
     fi
 
     if [ "$STAGE" = "make" ]; then

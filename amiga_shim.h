@@ -70,6 +70,16 @@ int   pclose(FILE *stream);
 #define O_DIRECTORY 0
 #endif
 
+/* Signal flags — clib4's signal.h doesn't define SA_ONSTACK (no
+ * sigaltstack support). Newlib does. Python's pylifecycle.c
+ * references it unconditionally when signal support is compiled in.
+ * Stub as 0 = ignored so the code compiles; the runtime alt-stack
+ * behavior is meaningless on OS4 anyway. */
+#include <signal.h>
+#ifndef SA_ONSTACK
+#define SA_ONSTACK 0
+#endif
+
 /* getrandom(2) — Linux/glibc syscall Python's bootstrap_hash uses.
  * Neither newlib nor OS4 ship an equivalent, and there's no /dev/urandom.
  * Our shim in amiga_shim.c fills the buffer with weak time-based entropy
