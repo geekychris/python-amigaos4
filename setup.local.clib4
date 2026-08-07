@@ -1,0 +1,76 @@
+# CPython Modules/Setup.local for clib4 target — variant of setup.local
+# that omits _ssl and _hashlib because AmiSSL hasn't been ported to
+# clib4 yet (no libamisslauto.a for clib4 in the SDK, and amissl_lazy.c
+# won't compile against clib4's openssl3 headers). Everything else
+# matches setup.local.
+#
+# Copied into build-ppc-amigaos-750-clib4/Modules/Setup.local by
+# build-750.sh when MCRT=clib4. Users can hand-edit here to add SSL
+# back once upstream AmiSSL provides clib4 support.
+
+*static*
+math mathmodule.c
+cmath cmathmodule.c
+_datetime _datetimemodule.c
+_json _json.c
+_random _randommodule.c
+_pickle _pickle.c
+_heapq _heapqmodule.c
+_bisect _bisectmodule.c
+_struct _struct.c
+_csv _csv.c
+_contextvars _contextvarsmodule.c
+_queue _queuemodule.c
+_statistics _statisticsmodule.c
+_opcode _opcode.c
+_zoneinfo _zoneinfo.c
+array arraymodule.c
+select selectmodule.c
+binascii binascii.c
+unicodedata unicodedata.c
+_socket socketmodule.c
+zlib zlibmodule.c -lz
+_amiga _amigamodule.c
+_sqlite3 _sqlite/blob.c _sqlite/connection.c _sqlite/cursor.c _sqlite/microprotocols.c _sqlite/module.c _sqlite/prepare_protocol.c _sqlite/row.c _sqlite/statement.c _sqlite/util.c -lsqlite3
+
+# Non-SSL hash primitives — pure-C fallbacks from HACL*.
+_md5 md5module.c _hacl/Hacl_Hash_MD5.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+_sha1 sha1module.c _hacl/Hacl_Hash_SHA1.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+_sha2 sha2module.c _hacl/Hacl_Hash_SHA2.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
+
+# _ssl / _hashlib intentionally omitted for clib4 — see docs/CLIB4_BUILD.md.
+# Python code that imports ssl will get ModuleNotFoundError.
+
+*disabled*
+_ssl
+_hashlib
+_posixsubprocess
+syslog
+termios
+grp
+pwd
+nis
+spwd
+resource
+_multiprocessing
+_posixshmem
+_curses
+_curses_panel
+_dbm
+_gdbm
+_lzma
+_tkinter
+_bz2
+audioop
+ossaudiodev
+mmap
+fcntl
+_crypt
+readline
+_ctypes
+_decimal
+_elementtree
+pyexpat
+_uuid
+_asyncio
+xxsubtype

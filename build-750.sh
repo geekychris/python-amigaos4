@@ -127,7 +127,14 @@ run_build_steps() {
     fi
 
     if [ "$STAGE" = "make" ]; then
-        cp -f "$WORK_DIR/setup.local" Modules/Setup.local
+        # Pick the right Setup.local — clib4 uses a variant that
+        # omits _ssl and _hashlib because AmiSSL doesn't have clib4
+        # support yet (see docs/CLIB4_BUILD.md).
+        if [ "$MCRT" = "clib4" ] && [ -f "$WORK_DIR/setup.local.clib4" ]; then
+            cp -f "$WORK_DIR/setup.local.clib4" Modules/Setup.local
+        else
+            cp -f "$WORK_DIR/setup.local" Modules/Setup.local
+        fi
         cp -f "$WORK_DIR/_amigamodule.c" "$WORK_DIR/$SRC/Modules/"
 
         # Clib4-only source patches:
@@ -155,23 +162,22 @@ run_build_steps() {
 
         # amissl_lazy.c only builds under newlib — clib4's include chain
         # pulls in openssl3 headers whose ASN.1 macros trigger a parse
-        # cascade error under this GCC/clib4 combo. For clib4, fall
-        # back to eager AmiSSL load via -lamisslauto (means python-os4
-        # won't start without AmiSSL installed; acceptable trade-off
-        # for the initial clib4 port).
+        # cascade error under this GCC/clib4 combo. For clib4, skip
+        # AmiSSL entirely — setup.local.clib4 also excludes _ssl and
+        # _hashlib since libamisslauto.a isn't shipped for clib4.
         if [ "$MCRT" = "newlib" ]; then
             ppc-amigaos-gcc $CFLAGS_BASE -c "$WORK_DIR/amissl_lazy.c" -o amissl_lazy.o
             ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
             ppc-amigaos-ranlib libamissl_lazy.a
             export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
         else
-            # Create an empty libamissl_lazy.a so LDFLAGS references
-            # don't fail. Runtime AmiSSL is provided by -lamisslauto.
+            # Empty libamissl_lazy.a so anything that still references
+            # it links against a no-op archive.
             echo 'void _amissl_lazy_placeholder(void) {}' > /tmp/amissl_lazy_stub.c
             ppc-amigaos-gcc $CFLAGS_BASE -c /tmp/amissl_lazy_stub.c -o amissl_lazy.o
             ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
             ppc-amigaos-ranlib libamissl_lazy.a
-            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive -lamisslauto"
+            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
         fi
 
         export CFLAGS="$CFLAGS_BASE -include $WORK_DIR/amiga_shim.h"
