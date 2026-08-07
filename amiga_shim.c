@@ -174,31 +174,57 @@ static int _is_newlib_native_volume(const char *path)
 
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
-    /* Only translate VOL:path → /VOL/path when the volume is NOT
-     * one newlib knows natively. Native volumes must pass through
-     * untouched — otherwise newlib creates a virtual file at
-     * /VOL/path that AmigaDOS `list` never sees (silent-write bug).
-     *
-     * Non-native volumes MUST translate — otherwise newlib prepends
-     * CWD and corrupts the path to /ystem: / /ython3: (Bill's
-     * commit 130d850 bug — triggers "Please insert volume /ystem:"
-     * requester). */
     if (!path || !*path || !buf || buflen < 4) return path;
-    if (path[0] == '/') return path;
 
-    const char *colon = strchr(path, ':');
-    const char *slash = strchr(path, '/');
-    const char *backslash = strchr(path, '\\');
+    /* Strip leading slash from volume paths to produce native VOL:rest format.
+     * On AmigaOS, /Workbench: or /System: or /python3/ causes newlib to strip
+     * the leading letter 'W'/'S'/'p' looking for /orkbench: or /ystem:, popping
+     * up a requester. Converting to native VOL:rest format eliminates the error. */
 
-    if (colon && colon > path && (!slash || colon < slash) &&
-        (!backslash || colon < backslash)) {
-        if (_is_newlib_native_volume(path)) return path;  /* pass through */
-        size_t vol_len = (size_t)(colon - path);
-        const char *rest = colon + 1;
-        if (rest[0] == '/' || rest[0] == '\\') ++rest;
-        snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
-        return buf;
+    const char *p = path;
+    if (p[0] == '/') p++;
+
+    const char *colon = strchr(p, ':');
+    const char *slash = strchr(p, '/');
+
+    /* Case A: /VOL:rest or /VOL/rest -> VOL:rest */
+    if (path[0] == '/') {
+        if (colon && (!slash || colon < slash)) {
+            size_t vol_len = (size_t)(colon - p);
+            const char *rest = colon + 1;
+            if (rest[0] == '/' || rest[0] == '\\') rest++;
+            int n = snprintf(buf, buflen, "%.*s:%s", (int)vol_len, p, rest);
+            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
+            return buf;
+        } else if (slash) {
+            size_t vol_len = (size_t)(slash - p);
+            const char *rest = slash + 1;
+            int n = snprintf(buf, buflen, "%.*s:%s", (int)vol_len, p, rest);
+            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
+            return buf;
+        }
     }
+
+    /* Case B: VOL:rest -> return path as-is (already valid native Amiga volume format) */
+    if (colon && (!slash || colon < slash)) {
+        return path;
+    }
+
+    /* Case C: VOL/rest (un-slashed, no colon, e.g. "Workbench/System/python3" or "System/python3/lib") -> VOL:rest */
+    if (slash && slash > path) {
+        size_t seg_len = (size_t)(slash - path);
+        if ((seg_len == 9 && strncasecmp(path, "Workbench", 9) == 0) ||
+            (seg_len == 6 && strncasecmp(path, "System", 6) == 0) ||
+            (seg_len == 7 && strncasecmp(path, "python3", 7) == 0) ||
+            (seg_len == 3 && (strncasecmp(path, "SYS", 3) == 0 || strncasecmp(path, "RAM", 3) == 0)) ||
+            (seg_len == 4 && strncasecmp(path, "Work", 4) == 0)) {
+            const char *rest = slash + 1;
+            int n = snprintf(buf, buflen, "%.*s:%s", (int)seg_len, path, rest);
+            if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
+            return buf;
+        }
+    }
+
     return path;
 }
 
