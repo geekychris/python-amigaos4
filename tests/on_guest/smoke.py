@@ -34,6 +34,7 @@ import traceback
 
 LOG = "T:smoke.log"
 OOB = "T:smoke_oob.log"           # scratch for AmigaDOS shellouts
+_results: list[tuple[str, bool, str, str]] = []   # (name, ok, tier, detail)
 _current_test: str | None = None
 
 
