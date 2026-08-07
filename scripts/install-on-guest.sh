@@ -157,6 +157,25 @@ if [ -d "$REPO/build-ppc-amigaos-750/build/lib.amigaos-powerpc-3.12" ]; then
     echo "   pyc.tar bundle from make_release.sh drops directly into DH1:lib)"
 fi
 
+# For the clib4 variant only: install the ssl shim as DH1:lib/ssl.py
+# so `import ssl` transparently uses amiga.https (see
+# amiga_bindings/amiga/compat/ssl_shim.py). Newlib builds have a real
+# compiled _ssl that wins the import; this file is only needed on
+# clib4, where no _ssl builtin exists.
+for v in "${variants[@]}"; do
+    if [ "$v" = "clib4" ]; then
+        echo
+        echo "─── ssl shim for clib4 (DH1:lib/ssl.py) ────────────────────"
+        _push "$REPO/amiga_bindings/amiga/compat/ssl.py" "DH1:lib/ssl.py"
+        _dos "makedir DH1:lib/amiga"
+        _dos "makedir DH1:lib/amiga/compat"
+        _push "$REPO/amiga_bindings/amiga/compat/__init__.py" \
+              "DH1:lib/amiga/compat/__init__.py"
+        _push "$REPO/amiga_bindings/amiga/compat/ssl_shim.py" \
+              "DH1:lib/amiga/compat/ssl_shim.py"
+    fi
+done
+
 # Wrapper scripts on the guest so users can invoke either variant
 echo
 echo "─── writing wrapper scripts ────────────────────────────────"
