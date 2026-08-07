@@ -34,7 +34,14 @@ fi
 
 if [ "$strip_after" -eq 1 ] && [ "$mode" != "clean" ] && [ "$mode" != "shell" ]; then
     echo
-    BDIR="build-ppc-amigaos-750"
+    # Pick the build dir that matches the MCRT variant just built.
+    MCRT="${MCRT:-newlib}"
+    case "$MCRT" in
+      newlib) BDIR="build-ppc-amigaos-750" ;;
+      clib4)  BDIR="build-ppc-amigaos-750-clib4" ;;
+      clib2)  BDIR="build-ppc-amigaos-750-clib2" ;;
+      *)      BDIR="build-ppc-amigaos-750" ;;
+    esac
     [ ! -d "$REPO/$BDIR" ] && BDIR="build-ppc-amigaos"
     echo "=== stripping $BDIR/python.exe -> python-stripped.exe ==="
     if command -v docker >/dev/null 2>&1; then

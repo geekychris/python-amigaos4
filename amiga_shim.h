@@ -14,21 +14,28 @@ extern "C" {
 #endif
 
 /* Shims are gated per libc. Newlib on OS4 is minimal — needs
- * unsetenv, initgroups, setrlimit/getrlimit. Clib2 provides all
- * of these already, so only stub what the target libc lacks. */
-#include <unistd.h>          /* both clib2 and newlib have this */
+ * unsetenv, initgroups, setrlimit/getrlimit. Clib2 and clib4 both
+ * provide all of these already, so only stub what the target libc
+ * lacks. Use the AMIGA_SHIM_NEEDS_POSIX_STUBS macro so a maintainer
+ * can override for a new libc without editing three call sites. */
+#include <unistd.h>          /* clib2, clib4, newlib all have this */
 
-#ifndef __CLIB2__
+#if !defined(__CLIB2__) && !defined(__CLIB4__)
+#define AMIGA_SHIM_NEEDS_POSIX_STUBS 1
+#endif
+
+#ifdef AMIGA_SHIM_NEEDS_POSIX_STUBS
 int unsetenv(const char *name);
 /* Signature matches clib2's (gid_t = unsigned int) so
  * newlib builds match too when we're the only definer. */
 int initgroups(const char *user, unsigned int group);
 #endif
 
-#ifndef __CLIB2__
+#ifdef AMIGA_SHIM_NEEDS_POSIX_STUBS
 /* Resource limits — POSIX rlim + setrlimit/getrlimit. Newlib on OS4
  * doesn't ship these. Stubbed to fail with ENOSYS so callers gracefully
- * degrade. faulthandler.c only uses this on Unix crash paths. */
+ * degrade. faulthandler.c only uses this on Unix crash paths.
+ * clib4 provides these natively (see clib4/include/sys/resource.h). */
 struct rlimit { unsigned long rlim_cur; unsigned long rlim_max; };
 #define RLIMIT_CPU     0
 #define RLIMIT_FSIZE   1
@@ -108,17 +115,29 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
  * when destroying locks previously associated with condition variables or
  * threads. Shim it to return 0 when status is EBUSY so CPython's
  * CHECK_STATUS_PTHREAD doesn't spam stderr with "Device or resource busy".
+ * clib4 uses a different pthread implementation that returns 0 correctly,
+ * so the shim is only wired in for newlib builds.
  * ---------------------------------------------------------------------- */
 #include <pthread.h>
+#ifndef __CLIB4__
 int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex);
 #define pthread_mutex_destroy amiga_pthread_mutex_destroy
+#endif
 
 /* -------------------------------------------------------------------------
  * AmigaOS path normalization shims — OS4 newlib POSIX path translation
  * requires absolute paths to start with '/'. If an Amiga path with a volume
- * colon (e.g. "python3:lib", "System:System/python3") is passed to file functions
- * without a leading '/', newlib treats it as relative to CWD, prepending CWD
- * and corrupting the volume string into "/ython3:" or "/ystem:".
+ * colon (e.g. "python3:lib", "System:System/python3") is passed to file
+ * functions without a leading '/', newlib treats it as relative to CWD,
+ * prepending CWD and corrupting the volume string into "/ython3:" or
+ * "/ystem:".
+ *
+ * clib4 handles Amiga paths natively when enableUnixPaths() is set (or the
+ * binary is compiled with `.unix` marker file present). The whole
+ * translation stack is disabled for clib4 builds — let its libc do the
+ * right thing. If a future clib4 build shows the same path corruption,
+ * flip the guard to also enable for __CLIB4__ and add clib4's runtime-
+ * detected native-volume list to _newlib_native_volumes[] in amiga_shim.c.
  * ---------------------------------------------------------------------- */
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -126,6 +145,7 @@ int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex);
 #include <stdarg.h>
 #include <utime.h>
 
+#ifndef __CLIB4__
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen);
 int amiga_stat(const char *path, struct stat *buf);
 int amiga_lstat(const char *path, struct stat *buf);
@@ -162,6 +182,7 @@ int amiga_utime(const char *filename, const struct utimbuf *times);
 #define readlink(p, b, s) amiga_readlink(p, b, s)
 #define chmod(p, m) amiga_chmod(p, m)
 #define utime(f, t) amiga_utime(f, t)
+#endif /* !__CLIB4__ */
 
 #ifdef __cplusplus
 }

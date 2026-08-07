@@ -12,7 +12,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="amiga-python-build:local"
 SRC="Python-3.12.7"
-BUILD="build-ppc-amigaos"
+
+MCRT="${MCRT:-newlib}"
+case "$MCRT" in
+  newlib) BUILD="build-ppc-amigaos" ;;
+  clib4)  BUILD="build-ppc-amigaos-clib4" ;;
+  clib2)  BUILD="build-ppc-amigaos-clib2" ;;
+  *) echo "unknown MCRT=$MCRT (want newlib|clib4|clib2)" >&2; exit 1 ;;
+esac
 
 case "${1:-make}" in
   clean)
@@ -47,9 +54,9 @@ run_build_steps() {
     export RANLIB=ppc-amigaos-ranlib
     export STRIP=ppc-amigaos-strip
 
-    export CFLAGS_BASE="-mcrt=newlib -mhard-float -O2 -mcpu=750 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+    export CFLAGS_BASE="-mcrt=$MCRT -mhard-float -O2 -mcpu=750 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
     export CFLAGS="$CFLAGS_BASE"
-    export LDFLAGS="-mcrt=newlib -mcpu=750 -athread=native -lauto"
+    export LDFLAGS="-mcrt=$MCRT -mcpu=750 -athread=native -lauto"
     export LDSHARED="ppc-amigaos-gcc -shared"
     export LINKCC="ppc-amigaos-gcc"
     export PYTHON_FOR_BUILD="$(which python3.12 2>/dev/null || which python3)"
@@ -105,8 +112,9 @@ run_build_steps() {
 
 if command -v docker >/dev/null 2>&1; then
     docker run --rm -v "$HERE:/work" "$IMAGE" bash -c "
+    export MCRT='$MCRT'
     $(declare -f run_build_steps)
-    run_build_steps '${1:-make}' '/work' '/tmp/build-ppc-amigaos'
+    run_build_steps '${1:-make}' '/work' '/tmp/$BUILD'
     "
 else
     run_build_steps "${1:-make}" "$HERE" "$HERE/$BUILD"

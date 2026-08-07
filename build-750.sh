@@ -7,17 +7,36 @@
 #   ./build-750.sh make
 #   ./build-750.sh clean
 #   ./build-750.sh shell
+#
+# Env:
+#   MCRT   — target C runtime: newlib (default) or clib4.
+#            Sets -mcrt=$MCRT in both CFLAGS and LDFLAGS. Also picks the
+#            output directory: build-ppc-amigaos-750 for newlib (legacy
+#            path preserved for compat), build-ppc-amigaos-750-clib4
+#            for clib4. Build script for both variants at once:
+#                MCRT=newlib ./build-750.sh && MCRT=clib4 ./build-750.sh
+#            or use ./build-all.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="amiga-python-build:local"
 SRC="Python-3.12.7"
-BUILD="build-ppc-amigaos-750"
+
+MCRT="${MCRT:-newlib}"
+case "$MCRT" in
+  newlib) BUILD="build-ppc-amigaos-750" ;;   # legacy path — backwards compat
+  clib4)  BUILD="build-ppc-amigaos-750-clib4" ;;
+  clib2)  BUILD="build-ppc-amigaos-750-clib2" ;;
+  *) echo "unknown MCRT=$MCRT (want newlib|clib4|clib2)" >&2; exit 1 ;;
+esac
+echo "MCRT=$MCRT  BUILD=$BUILD"
 
 case "${1:-make}" in
   clean)
     rm -rf "$HERE/$BUILD"
-    rm -rf "$HERE/build-ppc-amigaos"
+    if [ "$MCRT" = "newlib" ]; then
+      rm -rf "$HERE/build-ppc-amigaos"
+    fi
     exit 0
     ;;
   shell)
@@ -50,9 +69,9 @@ run_build_steps() {
 
     # PowerPC 750 is a suitable common G3/G4-era AmigaOS 4 baseline.
     # GCC supplies its native AmigaOS gthread implementation through -athread=native at link time.
-    export CFLAGS_BASE="-mcrt=newlib -mhard-float -O2 -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+    export CFLAGS_BASE="-mcrt=$MCRT -mhard-float -O2 -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
     export CFLAGS="$CFLAGS_BASE"
-    export LDFLAGS="-mcrt=newlib -mcpu=750 -mno-altivec -mno-powerpc64 -athread=native -lauto"
+    export LDFLAGS="-mcrt=$MCRT -mcpu=750 -mno-altivec -mno-powerpc64 -athread=native -lauto"
 
     export LDSHARED="ppc-amigaos-gcc -shared"
     export LINKCC="ppc-amigaos-gcc"
@@ -119,16 +138,19 @@ run_build_steps() {
         cp libamissl_lazy.a "$WORK_DIR/$BUILD/" 2>/dev/null || true
 
         # Also populate build-ppc-amigaos so release script picks up output
-        mkdir -p "$WORK_DIR/build-ppc-amigaos"
-        cp python "$WORK_DIR/build-ppc-amigaos/python.exe" 2>/dev/null || true
-        cp python "$WORK_DIR/build-ppc-amigaos/python" 2>/dev/null || true
-        cp libamiga_shim.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
-        cp libamissl_lazy.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
-        if [ -f "libpython3.12.a" ]; then
-            cp libpython3.12.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
-        fi
-        if [ -f "pyconfig.h" ]; then
-            cp pyconfig.h "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
+        # (legacy path — only for newlib builds to avoid clobbering).
+        if [ "$MCRT" = "newlib" ]; then
+            mkdir -p "$WORK_DIR/build-ppc-amigaos"
+            cp python "$WORK_DIR/build-ppc-amigaos/python.exe" 2>/dev/null || true
+            cp python "$WORK_DIR/build-ppc-amigaos/python" 2>/dev/null || true
+            cp libamiga_shim.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
+            cp libamissl_lazy.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
+            if [ -f "libpython3.12.a" ]; then
+                cp libpython3.12.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
+            fi
+            if [ -f "pyconfig.h" ]; then
+                cp pyconfig.h "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
+            fi
         fi
 
         echo "=== build complete ==="
@@ -139,6 +161,8 @@ run_build_steps() {
 if command -v docker >/dev/null 2>&1; then
     docker run --rm -v "$HERE:/work" "$IMAGE" bash -c "
     export SRC='$SRC'
+    export MCRT='$MCRT'
+    export BUILD='$BUILD'
     $(declare -f run_build_steps)
     run_build_steps '${1:-make}' '/work' '/work/$BUILD'
     "

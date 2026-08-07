@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "amiga_shim.h"
 
-#ifndef __CLIB2__
+#ifdef AMIGA_SHIM_NEEDS_POSIX_STUBS
 int unsetenv(const char *name)
 {
     if (!name || !*name) return -1;
@@ -120,12 +120,14 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
     return 0;
 }
 
+#ifndef __CLIB4__
 #undef pthread_mutex_destroy
 int amiga_pthread_mutex_destroy(pthread_mutex_t *mutex)
 {
     if (mutex) memset(mutex, 0, sizeof(pthread_mutex_t));
     return 0;
 }
+#endif
 
 #include <proto/exec.h>
 #include <dos/dos.h>
@@ -138,6 +140,16 @@ __attribute__((constructor)) static void amiga_suppress_requesters(void)
         }
     }
 }
+
+/* -------------------------------------------------------------------------
+ * All code below this point is newlib-specific — path translation and
+ * the amiga_* wrappers that macro-substitute stdlib file operations.
+ * clib4 provides Amiga-path handling natively (enableUnixPaths()), so
+ * we compile none of this for clib4 builds. If a clib4 build shows
+ * similar path corruption, remove the guard, and add clib4-native
+ * volumes to _newlib_native_volumes[] below.
+ * ---------------------------------------------------------------------- */
+#ifndef __CLIB4__
 
 /* Volume-name prefixes newlib recognises natively on OS4. For these,
  * VOL:path form works AND writes land in the real AmigaDOS-visible
@@ -359,3 +371,5 @@ int amiga_utime(const char *filename, const struct utimbuf *times)
     if (r != 0 && tp != filename) { errno = 0; r = utime(filename, times); }
     return r;
 }
+
+#endif /* !__CLIB4__ — path-translation wrappers */
