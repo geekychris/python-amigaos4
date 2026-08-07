@@ -172,14 +172,29 @@ static int _is_newlib_native_volume(const char *path)
     return 0;
 }
 
+static int _is_amiga_volume_name(const char *name, size_t len)
+{
+    if (!name || len == 0 || len > 100) return 0;
+    char vbuf[128];
+    snprintf(vbuf, sizeof(vbuf), "%.*s:", (int)len, name);
+    if (IDOS) {
+        BPTR lock = Lock((STRPTR)vbuf, SHARED_LOCK);
+        if (lock) {
+            UnLock(lock);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
     if (!path || !*path || !buf || buflen < 4) return path;
 
     /* Strip leading slash from volume paths to produce native VOL:rest format.
-     * On AmigaOS, /Workbench: or /System: or /python3/ causes newlib to strip
-     * the leading letter 'W'/'S'/'p' looking for /orkbench: or /ystem:, popping
-     * up a requester. Converting to native VOL:rest format eliminates the error. */
+     * On AmigaOS, /Boot: or /Workbench: or /python3/ causes newlib to strip
+     * the leading letter looking for /oot: or /orkbench: popping up a requester.
+     * Converting to native VOL:rest format eliminates the error. */
 
     const char *p = path;
     if (p[0] == '/') p++;
@@ -187,7 +202,7 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
     const char *colon = strchr(p, ':');
     const char *slash = strchr(p, '/');
 
-    /* Case A: /VOL:rest or /VOL/rest -> VOL:rest */
+    /* Case A: /VOL:rest or /VOL/rest -> VOL:rest (generic for ANY volume name) */
     if (path[0] == '/') {
         if (colon && (!slash || colon < slash)) {
             size_t vol_len = (size_t)(colon - p);
@@ -210,14 +225,10 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
         return path;
     }
 
-    /* Case C: VOL/rest (un-slashed, no colon, e.g. "Workbench/System/python3" or "System/python3/lib") -> VOL:rest */
+    /* Case C: VOL/rest (un-slashed, no colon) -> check dynamically via IDOS Lock if VOL: exists */
     if (slash && slash > path) {
         size_t seg_len = (size_t)(slash - path);
-        if ((seg_len == 9 && strncasecmp(path, "Workbench", 9) == 0) ||
-            (seg_len == 6 && strncasecmp(path, "System", 6) == 0) ||
-            (seg_len == 7 && strncasecmp(path, "python3", 7) == 0) ||
-            (seg_len == 3 && (strncasecmp(path, "SYS", 3) == 0 || strncasecmp(path, "RAM", 3) == 0)) ||
-            (seg_len == 4 && strncasecmp(path, "Work", 4) == 0)) {
+        if (_is_amiga_volume_name(path, seg_len)) {
             const char *rest = slash + 1;
             int n = snprintf(buf, buflen, "%.*s:%s", (int)seg_len, path, rest);
             if (n < 0 || (size_t)n >= buflen) { errno = ENAMETOOLONG; return NULL; }
