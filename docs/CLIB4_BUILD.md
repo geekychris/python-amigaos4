@@ -437,3 +437,32 @@ issue between CPython's assumptions and clib4's POSIX surface.
 4. **Swap clib4's `libdebug.so` for `libc.so`** in the deployed
    binary directory — the debug variant prints init traces (though
    might not help since it's a static build).
+
+## THE FIX: PYTHONUTF8=1 (2026-08-07)
+
+Debugged with a `wchar-probe.c` reproducer that tests mbstowcs /
+realpath / wcsdup / setlocale on both variants. All wchar operations
+pass identically — **except** `setlocale(LC_ALL, "")`:
+
+- **newlib:** returns `"C"`
+- **clib4:**  returns `"C-ISO-8859-1"`
+
+CPython's `pyconfig_calculate` uses the locale return value to
+compute wchar buffer sizes. On clib4's non-standard locale name it
+sizes the buffer wrongly, so the follow-up `mbstowcs` / `wcsdup`
+call fails silently — resulting in `pymain_init` returning either
+`"error evaluating path"` or `"memory allocation failed"`.
+
+**Fix:** `setenv PYTHONUTF8 1` — enables UTF-8 mode which bypasses
+the locale-based wchar sizing entirely. CPython then uses fixed
+UTF-8 encoding for all path/env conversions.
+
+`install-on-guest.sh` injects this env var into the clib4 wrapper
+script (`DH1:pyclib4`). Newlib doesn't need it.
+
+Verified end-to-end: `DH1:python-os4-clib4/python-os4 -c "print('alive')"`
+returns rc=0 and prints `alive` when PYTHONUTF8=1 is set.
+
+Task #153 done — the previously mysterious clib4 silent-init failure
+is a locale-return-value interop issue, worked around cleanly by
+PYTHONUTF8=1 in the launcher.
