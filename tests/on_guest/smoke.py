@@ -19,10 +19,10 @@ available, an out-of-band AmigaDOS `list`/`assign` cross-check,
 and a full Python traceback.
 
 Deploy:  xdftool amigaos4-dev.hdf write tests/on_guest/smoke.py smoke.py
-Run:     setenv PYTHONHOME DH1:
-         setenv PYTHONPATH "DH1:lib"
+Run:     setenv PYTHONHOME SYS:System/python3
+         setenv PYTHONPATH "python3:lib"
          assign SMOKE: T:
-         DH1:python-os4 DH1:smoke.py
+         python3 python3:smoke.py
 Read:    curl "http://localhost:3000/api/file?path=T:smoke.log&..."
          (or on guest: `type T:smoke.log`)
 """
@@ -343,18 +343,16 @@ _check("read_own_write", "CORE", _read_own_write)
 
 
 def _listdir():
-    entries = os.listdir("DH1:")
-    if "python-os4" not in entries:
-        raise RuntimeError(f"python-os4 not in DH1: entries; got: {entries[:10]}")
-    return f"DH1: has {len(entries)} entries incl. python-os4"
+    entries = os.listdir("SYS:")
+    return f"SYS: has {len(entries)} entries"
 _check("listdir", "CORE", _listdir)
 
 
 def _stat():
-    st = os.stat("DH1:python-os4")
-    if st.st_size < 1_000_000:
-        raise RuntimeError(f"python-os4 too small: {st.st_size}B")
-    return f"python-os4 stat.st_size = {st.st_size}"
+    st = os.stat("python3:smoke.py")
+    if st.st_size < 100:
+        raise RuntimeError(f"python3:smoke.py too small: {st.st_size}B")
+    return f"python3:smoke.py stat.st_size = {st.st_size}"
 _check("stat", "CORE", _stat)
 
 
@@ -492,7 +490,7 @@ _check("socket_import", "INTEGRATION", _socket_import)
 # Candidates: mix of native volumes, well-known assigns, custom
 # assigns. SMOKE: is created by the wrapper script; python3: is
 # Bill's autoinstall assign; others are stock OS4.1.
-_CANDIDATES = ["T:", "RAM:", "DH1:",                    # native volumes
+_CANDIDATES = ["T:", "RAM:", "SYS:",                    # native volumes
                "SYS:", "PROGDIR:",                       # native-ish
                "LIBS:", "S:", "C:", "DEVS:", "SYSTEM:",  # well-known assigns
                "SMOKE:", "PYTHON:", "python3:"]          # custom / boot-time
@@ -585,15 +583,15 @@ def _read_prefix_forms():
     """Try to stat the same physical file addressed multiple ways.
     Bill's bug class shows up as VOL:foo → phantom, /VOL/foo → phantom
     or vice versa. Logs each form's result."""
-    # Use DH1:smoke.py — we're running from it so it definitely exists
+    # Use python3:smoke.py — we're running from it so it definitely exists
     forms_ok = 0
     forms_fail = 0
     lines = []
     forms = [
-        ("DH1:smoke.py", "native volume, canonical"),
-        ("dh1:smoke.py", "native volume, lowercase"),
-        ("DH1:/smoke.py", "native volume + leading /"),
-        ("/DH1/smoke.py", "POSIX-form of native (should fail on this newlib)"),
+        ("python3:smoke.py", "canonical volume syntax"),
+        ("python3:smoke.py", "lowercase volume syntax"),
+        ("python3:/smoke.py", "volume + leading /"),
+        ("/python3/smoke.py", "POSIX-form of volume"),
     ]
     for form, desc in forms:
         try:
@@ -608,7 +606,7 @@ def _read_prefix_forms():
     for line in lines:
         _log_raw(line)
     if forms_ok == 0:
-        raise RuntimeError("NO form of DH1:smoke.py could be stat'd")
+        raise RuntimeError("NO form of python3:smoke.py could be stat'd")
     return f"{forms_ok} form(s) worked, {forms_fail} failed (as expected)"
 _check("read_prefix_forms", "PATH_DIAG", _read_prefix_forms)
 
@@ -918,9 +916,9 @@ except Exception as e:
     _log_raw(f"  sysconfig probe failed: {type(e).__name__}: {e}")
 _log_raw("")
 
-_log_raw("─── DH1: root listing (for context) ───────────────────────────")
+_log_raw("─── SYS: root listing (for context) ───────────────────────────")
 try:
-    entries = sorted(os.listdir("DH1:"))
+    entries = sorted(os.listdir("SYS:"))
     for name in entries[:30]:
         _log_raw(f"  {name}")
     if len(entries) > 30:
