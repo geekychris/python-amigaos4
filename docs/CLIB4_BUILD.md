@@ -380,3 +380,60 @@ If any of that matters for your workflow, use the newlib variant.
 
 Ship us the failure via `T:smoke.log` (see the smoke's own trailer for
 what to include) and the crash log if any.
+
+## Runtime debugging progress (2026-08-07 session)
+
+Confirmed: **clib4 v2.3 itself works fine on our QEMU guest** —
+a static hello-world (`hello.c` compiled with `-mcrt=clib4 -athread=native
+-lauto`) prints normally and exits with the expected return code. So
+clib4.library v2.3 in `LIBS:` and the runtime linkage are correct.
+
+**The blocker is CPython-specific.** The `pymain.log` tracer Bill added
+to `Modules/main.c` captures where init fails:
+
+Without `PYTHONEXECUTABLE`:
+```
+A: enter pymain_main
+B: after pymain_init exitcode=0 exception=1
+  err_msg: error evaluating path
+  func:    (none)
+```
+
+With `PYTHONEXECUTABLE=DH1:python-os4-clib4/python-os4`:
+```
+A: enter pymain_main
+B: after pymain_init exitcode=0 exception=1
+  err_msg: memory allocation failed
+  func:    (none)
+```
+
+Interpretation: CPython's `pyconfig_calculate` (invoked from
+`Py_InitializeFromConfig`) fails when it tries to resolve wide-char
+paths on clib4. The first form fails at the resolution itself; the
+second progresses past resolution but then fails on a wide-char
+allocation (probably `_Py_wcsdup` or `mbstowcs`).
+
+The same code works on newlib, which suggests clib4's `mbstowcs` /
+`realpath` / wchar handling differs from newlib in a way our frozen
+`getpath.py` can't tolerate. Not a bug in *our* code — an interop
+issue between CPython's assumptions and clib4's POSIX surface.
+
+**Paths forward** (roughly ordered by effort):
+
+1. **Patch pymain to hardcode paths for clib4** — instead of calling
+   `pyconfig_calculate`, set `sys.executable`/`sys.prefix`/etc.
+   directly from compile-time constants when `__CLIB4__` is set.
+   Modest patch to `Modules/main.c` or `Python/initconfig.c`.
+
+2. **Bug-report to clib4** — file an issue at
+   https://github.com/AmigaLabs/clib4 with a minimal reproducer
+   (CPython does `mbstowcs("DH1:python-os4-clib4/python-os4", buf, N)`
+   or similar). May be fixed in v2.4.
+
+3. **Attach GDB via QEMU gdbstub** (per `gdb_qemu_available.md`
+   memory) — set a breakpoint on `_PyStatus_ERR` or wcsdup, catch
+   the specific failing call, work backwards.
+
+4. **Swap clib4's `libdebug.so` for `libc.so`** in the deployed
+   binary directory — the debug variant prints init traces (though
+   might not help since it's a static build).
