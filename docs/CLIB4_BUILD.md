@@ -93,53 +93,51 @@ scripts/install-on-guest.sh newlib   # newlib only
 scripts/install-on-guest.sh clib4    # clib4 only
 ```
 
-Layout on the guest:
+Layout on the guest (single flat drawer, both binaries at DH1: root
+— no per-variant directory needed because the binaries are fully
+statically linked):
 
 ```
-DH1:python-os4-newlib/
-    python-os4                # newlib-linked interpreter
-DH1:python-os4-clib4/
-    python-os4                # clib4-linked interpreter
-    libc.so                   # clib4's libc — MUST live next to the exe
-    libpthread.so             # (all .so files bundled here)
-    libcrypt.so
-    ...
-DH1:pynewlib                  # wrapper script — invokes newlib variant
-DH1:pyclib4                   # wrapper script — invokes clib4 variant
-LIBS:clib4.library            # required for any clib4 binary to start
+DH1:python-os4-newlib          # newlib interpreter        (~15 MB stripped)
+DH1:python-os4-clib4           # clib4 interpreter         (~10 MB stripped)
+DH1:pynewlib                   # launcher for newlib
+DH1:pyclib4                    # launcher for clib4 (sets PYTHONUTF8=1)
+DH1:setup-python-os4-newlib    # one-time env setup for newlib
+DH1:setup-python-os4-clib4     # one-time env setup for clib4
+DH1:lib/                        # Python stdlib (shared)
+DH1:lib/ssl.py                  # amiga.compat.ssl shim (used by clib4)
+LIBS:clib4.library              # required for any clib4 binary to start (SYS: disk)
 ```
 
-**Why per-variant drawers?** Both newlib and clib4 ship a `libc.so`.
-Dropping both into `SOBJS:` would break one of the two. The OS4 ELF
-loader searches `PROGDIR:` before `SOBJS:`, so binding each `.so` next
-to its own binary keeps them isolated.
+**Why no per-variant drawer / no bundled `.so` files?** Both binaries
+are fully statically linked (`readelf -d` shows "no dynamic section"),
+and our build configures `ac_cv_func_dlopen=no`, so no C extensions
+load at runtime. The `.so` files that `extract-clib4.sh` produces
+(`libc.so`, `libpthread.so`, `libstdc++.so`, etc.) are only relevant
+if a downstream binary you build dynamically links against clib4 —
+not needed for python-os4-clib4 itself.
 
 ## Deploy to guest (manual / no devbench — for Bill and others)
 
 If you're deploying to a guest that doesn't have the amiga_mcp bridge
-running (e.g. a real Sam460ex, or a QEMU without the devbench daemon),
-copy the files manually. Two paths:
+running (real Sam460ex, or QEMU without the devbench daemon), copy
+the files manually. Two paths:
 
 ### Path A — via xdftool on the host (QEMU shut down)
 
 ```bash
-# Newlib variant
-xdftool ~/AmigaOS4/amigaos4-dev.hdf makedir python-os4-newlib
+# Both interpreters — flat, no drawers
 xdftool ~/AmigaOS4/amigaos4-dev.hdf write \
-    build-ppc-amigaos-750/python-stripped.exe python-os4-newlib/python-os4
+    build-ppc-amigaos-750/python-stripped.exe python-os4-newlib
+xdftool ~/AmigaOS4/amigaos4-dev.hdf write \
+    build-ppc-amigaos-750-clib4/python-stripped.exe python-os4-clib4
 
-# Clib4 variant
-xdftool ~/AmigaOS4/amigaos4-dev.hdf makedir python-os4-clib4
-xdftool ~/AmigaOS4/amigaos4-dev.hdf write \
-    build-ppc-amigaos-750-clib4/python-stripped.exe \
-    python-os4-clib4/python-os4
-for so in clib4-runtime/*.so; do
-    xdftool ~/AmigaOS4/amigaos4-dev.hdf write "$so" \
-        "python-os4-clib4/$(basename $so)"
+# Launcher scripts — pre-made in scripts/amiga-scripts/
+for f in pynewlib pyclib4 setup-python-os4-newlib setup-python-os4-clib4; do
+    xdftool ~/AmigaOS4/amigaos4-dev.hdf write scripts/amiga-scripts/$f "$f"
 done
 
-# The clib4.library needs to go into LIBS: on the SYS: volume.
-# Different HDF file — same idea:
+# clib4.library on the SYSTEM disk (only for clib4 support)
 xdftool ~/AmigaOS4/amigaos4-system.hdf write \
     clib4-runtime/clib4.library LIBS/clib4.library
 ```
@@ -149,37 +147,24 @@ xdftool ~/AmigaOS4/amigaos4-system.hdf write \
 Get these files onto the guest by any means:
 
 ```
-python-stripped.exe (newlib)         → DH1:python-os4-newlib/python-os4
-python-stripped.exe (clib4)          → DH1:python-os4-clib4/python-os4
-libc.so + libpthread.so + libcrypt.so + libm.so
-    + libamiga.so + libstdc++.so + libatomic.so + libssp.so
-                                     → DH1:python-os4-clib4/*.so
-clib4.library                        → transfer, then on guest:
-                                         copy DH1:clib4.library LIBS: CLONE
+python-stripped.exe (newlib)  →  DH1:python-os4-newlib
+python-stripped.exe (clib4)   →  DH1:python-os4-clib4
+scripts/amiga-scripts/*       →  DH1:{pynewlib,pyclib4,setup-python-os4-*}
+clib4.library                 →  transfer, then on guest:
+                                    copy DH1:clib4.library LIBS: CLONE
 ```
 
-Then on the guest, create wrappers:
+Then on the guest, run the setup script once per variant:
 
 ```
-; DH1:pynewlib — save as this file
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH "DH1:lib"
-DH1:python-os4-newlib/python-os4 $@
-```
-
-```
-; DH1:pyclib4 — save as this file
-setenv PYTHONHOME DH1:
-setenv PYTHONPATH "DH1:lib"
-DH1:python-os4-clib4/python-os4 $@
-```
-
-Make both wrappers executable:
-
-```
+execute DH1:setup-python-os4-newlib
+execute DH1:setup-python-os4-clib4
 protect DH1:pynewlib rwed
 protect DH1:pyclib4  rwed
 ```
+
+If you want the env vars persistent across boots, paste the `setenv`
+lines from `setup-python-os4-*` into `S:User-Startup`.
 
 ## Side-by-side testing
 

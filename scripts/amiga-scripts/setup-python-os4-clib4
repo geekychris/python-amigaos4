@@ -1,0 +1,30 @@
+.KEY tag/K
+.BRA {
+.KET }
+; setup-python-os4-clib4 — configure environment for the clib4 variant
+; of python-os4. Run once per shell session, or paste the setenv lines
+; into S:User-Startup to make them permanent.
+;
+; Assumes:
+;   DH1:python-os4-clib4    is the interpreter binary
+;   DH1:lib/                 contains the stdlib
+;   DH1:lib/ssl.py           is the amiga.compat ssl shim (see docs)
+;   LIBS:clib4.library       is the clib4 runtime (installed on SYS: disk)
+;
+; Adjust the paths below if your layout differs.
+
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH "DH1:lib"
+
+; REQUIRED for clib4 builds — bypasses locale-based wchar sizing that
+; CPython's pyconfig_calculate can't handle when clib4's setlocale
+; returns "C-ISO-8859-1" (which is the non-standard value the OS4
+; port emits). Without this, python-os4-clib4 exits silently at
+; pymain_init with either "error evaluating path" or "memory
+; allocation failed". See docs/CLIB4_BUILD.md.
+setenv PYTHONUTF8 1
+
+echo "python-os4-clib4 env configured. Run:"
+echo "  DH1:pyclib4 -V"
+echo "or:"
+echo "  DH1:python-os4-clib4 DH1:your-script.py"

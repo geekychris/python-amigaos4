@@ -1,0 +1,26 @@
+.KEY tag/K
+.BRA {
+.KET }
+; setup-python-os4-newlib — configure environment for the newlib variant
+; of python-os4. Run once per shell session, or paste the setenv lines
+; into S:User-Startup to make them permanent.
+;
+; Assumes:
+;   DH1:python-os4-newlib is the interpreter binary
+;   DH1:lib/                    contains the stdlib (Lib/*.py + python312.zip)
+;
+; Adjust the paths below if your layout differs.
+
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH "DH1:lib"
+
+; Optional — if you have amiga.https + certs installed at the standard
+; locations, uncomment to route stdlib urllib.request through amiga.https
+; instead of the compiled _ssl module. Only useful if you're debugging
+; _ssl issues; normally leave this off on newlib.
+;setenv AMIGA_SSL_SHIM_NO_INSTALL 1
+
+echo "python-os4-newlib env configured. Run:"
+echo "  DH1:pynewlib -V"
+echo "or:"
+echo "  DH1:python-os4-newlib DH1:your-script.py"

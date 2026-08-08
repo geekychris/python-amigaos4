@@ -1,0 +1,19 @@
+.KEY args/M
+.BRA {
+.KET }
+; pyclib4 — launcher for the clib4 variant of python-os4
+;
+; PYTHONUTF8=1 is mandatory: without it, python-os4-clib4 exits
+; silently at pymain_init because clib4's setlocale returns the
+; non-standard "C-ISO-8859-1" which throws off CPython's wchar
+; buffer sizing. UTF-8 mode bypasses that whole code path.
+;
+; Usage:
+;   execute DH1:pyclib4 -V
+;   execute DH1:pyclib4 DH1:some-script.py [args...]
+;   execute DH1:pyclib4 -c "print('hello')"
+
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH "DH1:lib"
+setenv PYTHONUTF8 1
+DH1:python-os4-clib4 {args}

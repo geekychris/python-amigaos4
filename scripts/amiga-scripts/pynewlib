@@ -1,0 +1,13 @@
+.KEY args/M
+.BRA {
+.KET }
+; pynewlib — launcher for the newlib variant of python-os4
+;
+; Usage:
+;   execute DH1:pynewlib -V
+;   execute DH1:pynewlib DH1:some-script.py [args...]
+;   execute DH1:pynewlib -c "print('hello')"
+
+setenv PYTHONHOME DH1:
+setenv PYTHONPATH "DH1:lib"
+DH1:python-os4-newlib {args}
