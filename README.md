@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Python Amigaos4 logo" width="180">
+</p>
+
 # python-amigaos4
 
 **CPython 3.12.7 for AmigaOS 4.1 PowerPC.**
