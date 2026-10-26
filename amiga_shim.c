@@ -184,6 +184,49 @@ static int _is_newlib_native_volume(const char *path)
     return 0;
 }
 
+/* A volume name (DH1's "Workbench:", "Ram Disk:") or an assign that
+ * isn't in the list above: ask AmigaDOS what it is and rewrite the
+ * name to its device form ("chris:x" -> "DH1:x", "Ram Disk:T" ->
+ * "RAM:T", "Python3:lib" -> "DH1:Python3/lib"), which newlib does
+ * handle. Writes the result into buf and returns 1, or returns 0
+ * when the name isn't mounted or doesn't lead to a native device.
+ * The DosList check comes first so an unknown name never puts up a
+ * "Please insert volume" requester. */
+static int _resolve_to_native(const char *path, size_t vol_len,
+                              const char *rest, char *buf, size_t buflen)
+{
+    char name[128];
+    if (vol_len == 0 || vol_len + 2 > sizeof(name)) return 0;
+    memcpy(name, path, vol_len);
+    name[vol_len] = '\0';
+
+    const uint32 flags = LDF_VOLUMES | LDF_ASSIGNS | LDF_DEVICES | LDF_READ;
+    struct DosList *dl = LockDosList(flags);
+    int known = FindDosEntry(dl, name, flags) != NULL;
+    UnLockDosList(flags);
+    if (!known) return 0;
+
+    name[vol_len] = ':';
+    name[vol_len + 1] = '\0';
+    APTR oldwin = SetProcWindow((APTR)-1);
+    BPTR lock = Lock(name, SHARED_LOCK);
+    SetProcWindow(oldwin);
+    if (!lock) return 0;
+    int ok = DevNameFromLock(lock, buf, (int32)buflen, DN_FULLPATH);
+    UnLock(lock);
+    if (!ok || !_is_newlib_native_volume(buf)) return 0;
+
+    size_t len = strlen(buf);
+    if (*rest) {
+        char last = len ? buf[len - 1] : ':';
+        const char *sep = (last == ':' || last == '/') ? "" : "/";
+        if (len + strlen(sep) + strlen(rest) + 1 > buflen) return 0;
+        strcat(buf, sep);
+        strcat(buf, rest);
+    }
+    return 1;
+}
+
 const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
 {
     /* Only translate VOL:path → /VOL/path when the volume is NOT
@@ -208,6 +251,8 @@ const char *amiga_to_posix_path(const char *path, char *buf, size_t buflen)
         size_t vol_len = (size_t)(colon - path);
         const char *rest = colon + 1;
         if (rest[0] == '/' || rest[0] == '\\') ++rest;
+        if (_resolve_to_native(path, vol_len, rest, buf, buflen))
+            return buf;
         snprintf(buf, buflen, "/%.*s/%s", (int)vol_len, path, rest);
         return buf;
     }
