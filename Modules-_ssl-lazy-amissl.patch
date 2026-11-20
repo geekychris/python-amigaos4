@@ -4,7 +4,7 @@
  PyMODINIT_FUNC
  PyInit__ssl(void)
  {
-+#ifdef AMIGA
++#if defined(AMIGA) && !defined(__CLIB4__)
 +    /* AmigaOS 4: open amissl.library on demand instead of at process
 +     * startup (libamisslauto's ELF ctor). Lets python-os4 launch on
 +     * systems that don't have AmiSSL installed; only `import ssl`

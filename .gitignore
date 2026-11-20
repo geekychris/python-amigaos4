@@ -16,3 +16,7 @@ Python-3.12.7.tar.xz
 Python-3.12.7/
 python312.zip
 releases/
+release/
+X5000-logs/
+X5000-logs.info
+x5000-log*
