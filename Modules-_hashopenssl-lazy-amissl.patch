@@ -4,7 +4,7 @@
  PyMODINIT_FUNC
  PyInit__hashlib(void)
  {
-+#ifdef AMIGA
++#if defined(AMIGA) && !defined(__CLIB4__)
 +    /* AmigaOS 4: see amissl_lazy.c + Modules-_ssl-lazy-amissl.patch —
 +     * same on-demand amissl open, applied here so `import hashlib`
 +     * (which pulls in _hashlib) doesn't need amissl at Python startup. */

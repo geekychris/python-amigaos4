@@ -69,7 +69,7 @@ run_build_steps() {
 
     # PowerPC 750 is a suitable common G3/G4-era AmigaOS 4 baseline.
     # GCC supplies its native AmigaOS gthread implementation through -athread=native at link time.
-    export CFLAGS_BASE="-mcrt=$MCRT -mhard-float -O2 -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
+    export CFLAGS_BASE="-mcrt=$MCRT -mhard-float -O3 -fno-semantic-interposition -mcpu=750 -mno-altivec -mno-powerpc64 -Wall -D__PPC__ -D__USE_INLINE__ -D__USE_OLD_TIMEVAL__ -DAMIGA -D_AMIGA -Dpowerpc -DSSIZE_MAX=0x7fffffff"
 
     # Clib4-specific compile flags. AmiSSL declares OPENSSL_THREADS in
     # opensslconf/configuration.h but clib4's include chain for openssl
@@ -111,6 +111,7 @@ run_build_steps() {
             ac_cv_func_kill=no \
             ac_cv_func_epoll_create=no \
             ac_cv_func_kqueue=no \
+            ac_cv_func_poll=no \
             ac_cv_func_pipe=no \
             ac_cv_func_execv=no \
             ac_cv_have_working_getgrgid_r=no \
@@ -160,25 +161,12 @@ run_build_steps() {
         ppc-amigaos-ranlib libamiga_shim.a
         export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamiga_shim.a -Wl,--no-whole-archive"
 
-        # amissl_lazy.c only builds under newlib — clib4's include chain
-        # pulls in openssl3 headers whose ASN.1 macros trigger a parse
-        # cascade error under this GCC/clib4 combo. For clib4, skip
-        # AmiSSL entirely — setup.local.clib4 also excludes _ssl and
-        # _hashlib since libamisslauto.a isn't shipped for clib4.
-        if [ "$MCRT" = "newlib" ]; then
-            ppc-amigaos-gcc $CFLAGS_BASE -c "$WORK_DIR/amissl_lazy.c" -o amissl_lazy.o
-            ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
-            ppc-amigaos-ranlib libamissl_lazy.a
-            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
-        else
-            # Empty libamissl_lazy.a so anything that still references
-            # it links against a no-op archive.
-            echo 'void _amissl_lazy_placeholder(void) {}' > /tmp/amissl_lazy_stub.c
-            ppc-amigaos-gcc $CFLAGS_BASE -c /tmp/amissl_lazy_stub.c -o amissl_lazy.o
-            ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
-            ppc-amigaos-ranlib libamissl_lazy.a
-            export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
-        fi
+        # amissl_lazy.c provides OpenLibrary/GetInterface on-demand loading of AmiSSL
+        # without libamisslauto constructor
+        ppc-amigaos-gcc $CFLAGS_BASE -c "$WORK_DIR/amissl_lazy.c" -o amissl_lazy.o
+        ppc-amigaos-ar rcs libamissl_lazy.a amissl_lazy.o
+        ppc-amigaos-ranlib libamissl_lazy.a
+        export LDFLAGS="$LDFLAGS -Wl,--whole-archive $(pwd)/libamissl_lazy.a -Wl,--no-whole-archive"
 
         export CFLAGS="$CFLAGS_BASE -include $WORK_DIR/amiga_shim.h"
 
@@ -190,12 +178,17 @@ run_build_steps() {
         cp libamiga_shim.a "$WORK_DIR/$BUILD/" 2>/dev/null || true
         cp libamissl_lazy.a "$WORK_DIR/$BUILD/" 2>/dev/null || true
 
+        # Always generate freshly stripped binary
+        ppc-amigaos-strip -o python-stripped.exe python.exe
+        cp python-stripped.exe "$WORK_DIR/$BUILD/python-stripped.exe" 2>/dev/null || true
+
         # Also populate build-ppc-amigaos so release script picks up output
         # (legacy path — only for newlib builds to avoid clobbering).
         if [ "$MCRT" = "newlib" ]; then
             mkdir -p "$WORK_DIR/build-ppc-amigaos"
             cp python "$WORK_DIR/build-ppc-amigaos/python.exe" 2>/dev/null || true
             cp python "$WORK_DIR/build-ppc-amigaos/python" 2>/dev/null || true
+            cp python-stripped.exe "$WORK_DIR/build-ppc-amigaos/python-stripped.exe" 2>/dev/null || true
             cp libamiga_shim.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
             cp libamissl_lazy.a "$WORK_DIR/build-ppc-amigaos/" 2>/dev/null || true
             if [ -f "libpython3.12.a" ]; then
@@ -207,7 +200,7 @@ run_build_steps() {
         fi
 
         echo "=== build complete ==="
-        ls -la "$WORK_DIR/$BUILD/python.exe" "$WORK_DIR/$BUILD/libamiga_shim.a" "$WORK_DIR/$BUILD/libamissl_lazy.a"
+        ls -la "$WORK_DIR/$BUILD/python.exe" "$WORK_DIR/$BUILD/python-stripped.exe" "$WORK_DIR/$BUILD/libamiga_shim.a" "$WORK_DIR/$BUILD/libamissl_lazy.a"
     fi
 }
 

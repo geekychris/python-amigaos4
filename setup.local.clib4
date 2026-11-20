@@ -38,12 +38,18 @@ _md5 md5module.c _hacl/Hacl_Hash_MD5.c -I$(srcdir)/Modules/_hacl/include -DPy_BU
 _sha1 sha1module.c _hacl/Hacl_Hash_SHA1.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
 _sha2 sha2module.c _hacl/Hacl_Hash_SHA2.c -I$(srcdir)/Modules/_hacl/include -DPy_BUILD_CORE_BUILTIN
 
-# _ssl / _hashlib intentionally omitted for clib4 — see docs/CLIB4_BUILD.md.
-# Python code that imports ssl will get ModuleNotFoundError.
+# _ssl and _hashlib linked against clib4's OpenSSL 3 (SDK/local/clib4/{include,lib}/openssl3)
+_ssl _ssl.c -I/opt/ppc-amigaos/ppc-amigaos/SDK/local/clib4/include/openssl3 -DOPENSSL_NO_SSL3_METHOD -DOPENSSL_NO_TLS1_METHOD -DOPENSSL_NO_TLS1_1_METHOD -DOPENSSL_NO_TLS1_2_METHOD /opt/ppc-amigaos/ppc-amigaos/SDK/local/clib4/lib/openssl3/libssl.a /opt/ppc-amigaos/ppc-amigaos/SDK/local/clib4/lib/openssl3/libcrypto.a -lpthread -latomic
+_hashlib _hashopenssl.c -I/opt/ppc-amigaos/ppc-amigaos/SDK/local/clib4/include/openssl3 /opt/ppc-amigaos/ppc-amigaos/SDK/local/clib4/lib/openssl3/libcrypto.a -lpthread -latomic
+
+# Memory mapping (native clib4 support)
+mmap mmapmodule.c
+
+# XML Parsing (libexpat)
+pyexpat pyexpat.c -lexpat
+_elementtree _elementtree.c
 
 *disabled*
-_ssl
-_hashlib
 _posixsubprocess
 syslog
 termios
@@ -63,14 +69,11 @@ _tkinter
 _bz2
 audioop
 ossaudiodev
-mmap
 fcntl
 _crypt
 readline
 _ctypes
 _decimal
-_elementtree
-pyexpat
 _uuid
 _asyncio
 xxsubtype
